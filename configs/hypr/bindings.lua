@@ -11,6 +11,7 @@ o.bind_toggle("CTRL + ALT + D", "Toggle top bar (Islands)", "bar")
 o.bind("CTRL + ALT + SPACE", "Toggle Dynamic Island expand/collapse", "omarchy-shell -q dynamicisland toggle")
 o.bind("SUPER + ALT + I", "Toggle Dynamic Island", "omarchy-shell -q dynamicisland toggle")
 o.bind("SUPER + ALT + T", "Open Dynamic Island Timer", "omarchy-shell -q dynamicisland open timer")
+o.bind("SUPER + ALT + F", "Toggle Dynamic Island Focus Mode", (os.getenv("HOME") or "") .. "/.local/bin/omarchy-toggle-focus-mode")
 o.bind("CTRL + ALT + V", "Clipboard Manager (Dynamic Island)", { panel = "omarchy.clipboard" })
 
 -- 3. Launch Terminal: Alt + Enter (GlazeWM)
@@ -107,12 +108,12 @@ o.bind("CTRL + SHIFT + ESCAPE", "Task Manager (btop)", { tui = "btop", focus = t
 o.rebind("SUPER + SHIFT + S", "Screenshot (Snipping Tool)", "omarchy-capture-screenshot")
 
 -- Win + W: Force kill active window and completely terminate its running process
-o.rebind("SUPER + W", "Kill active app process", (os.getenv("HOME") or "") .. "/.local/bin/omarchy-kill-active")
+o.rebind("SUPER + W", "Kill active app process", "/home/hous/.local/bin/omarchy-kill-active")
 
 -- 15. Laptop Lid Switch Handling
 -- Plugged in: Clamshell single-screen on external display (keep running)
 -- On battery: True SSD Hibernation (save state and power off)
-o.rebind("switch:on:Lid Switch", nil, (os.getenv("HOME") or "") .. "/.config/hypr/scripts/lid-close-handler.sh", { locked = true })
+o.rebind("switch:on:Lid Switch", nil, "/home/hous/.config/hypr/scripts/lid-close-handler.sh", { locked = true })
 o.rebind("switch:off:Lid Switch", nil, "omarchy-hyprland-monitor-clamshell", { locked = true })
 
 

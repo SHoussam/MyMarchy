@@ -1,0 +1,59 @@
+#!/bin/bash
+
+# omarchy:summary=Toggle Dynamic Island Focus Mode (disables hover-to-expand)
+# omarchy:examples=omarchy-toggle-focus-mode | omarchy-toggle-focus-mode on | omarchy-toggle-focus-mode off
+
+set -euo pipefail
+
+CONFIG_FILE="$HOME/.config/omarchy/dynamic-island.json"
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  echo "{}" > "$CONFIG_FILE"
+fi
+
+current_hover=$(jq -r 'if has("hoverExpand") then .hoverExpand else true end' "$CONFIG_FILE")
+
+target_state=""
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    on|enable|true)
+      target_state="false"  # Focus mode ON means hoverExpand is FALSE
+      ;;
+    off|disable|false)
+      target_state="true"   # Focus mode OFF means hoverExpand is TRUE
+      ;;
+    status)
+      if [[ "$current_hover" == "false" ]]; then
+        echo "Focus Mode: ON (Dynamic Island only opens on click)"
+      else
+        echo "Focus Mode: OFF (Dynamic Island expands on hover)"
+      fi
+      exit 0
+      ;;
+    *)
+      echo "Usage: omarchy-toggle-focus-mode [on|off|status]"
+      exit 1
+      ;;
+  esac
+else
+  # Toggle
+  if [[ "$current_hover" == "false" ]]; then
+    target_state="true"
+  else
+    target_state="false"
+  fi
+fi
+
+# Update config file atomically
+tmp_file=$(mktemp)
+jq --argjson val "$target_state" '.hoverExpand = $val' "$CONFIG_FILE" > "$tmp_file"
+mv "$tmp_file" "$CONFIG_FILE"
+
+# Send notification if in graphical session
+if [[ "$target_state" == "false" ]]; then
+  omarchy-notification-send -g "🎯" "Focus Mode: Enabled" "Dynamic Island stays compact and only opens on click" 2>/dev/null || true
+  echo "Focus Mode: Enabled (click-to-open only)"
+else
+  omarchy-notification-send -g "🎯" "Focus Mode: Disabled" "Dynamic Island will expand automatically on mouse hover" 2>/dev/null || true
+  echo "Focus Mode: Disabled (hover-to-expand enabled)"
+fi
