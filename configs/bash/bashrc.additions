@@ -13,3 +13,9 @@ alias btop="btop"
 alias docker-ui="omarchy-launch-docker-tui"
 alias emergency-kill="omarchy-kill-active"
 alias nitrosense="damx"
+
+# Launch Telemetry HUD on interactive terminal sessions
+if [[ $- == *i* ]] && [[ -z "$FASTFETCH_SHOWN" ]] && [[ "$TERM" != "dumb" ]] && [[ -t 1 ]]; then
+  export FASTFETCH_SHOWN=1
+  fastfetch
+fi

@@ -1,0 +1,24 @@
+# ============================================================================
+# Houssam's Ghostty Config — 1:1 Translation of Windows Terminal + Enhanced UI
+# ============================================================================
+
+font-family = "JetBrainsMono Nerd Font"
+font-size = 8
+background = 08080a
+foreground = c0caf5
+background-opacity = 0.91
+background-blur-radius = 20
+
+cursor-style = bar
+cursor-style-blink = true
+cursor-color = 507D00
+
+window-decoration = false
+window-padding-x = 10
+window-padding-y = 8
+window-padding-balance = true
+window-subtitle = working-directory
+unfocused-split-opacity = 0.85
+
+keybind = alt+shift+d=new_split:auto
+keybind = ctrl+v=paste_from_clipboard
