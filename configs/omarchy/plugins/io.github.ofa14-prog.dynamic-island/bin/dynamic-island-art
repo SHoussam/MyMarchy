@@ -1,0 +1,113 @@
+#!/bin/bash
+# Artwork for the island, decoded outside the shell.
+#
+#   echo <url> | dynamic-island-art
+#
+# Reads one image URL on stdin (file://, http(s):// or data:image/...;base64,
+# as a media player or the shelf gives it), and prints the file:// URL of a
+# small PNG made from it, or nothing if it is not a plain, reasonably sized
+# image. The island only ever loads that PNG, so a hostile or huge artwork
+# (a tiny progressive JPEG declaring 30000x30000 pixels, say) costs this
+# short-lived process, not the shell.
+#
+# - The source is read with a byte cap; remote art over HTTPS (or HTTP) only,
+#   with a time limit.
+# - The header is read without decoding pixels; only JPEG, PNG, WebP, GIF,
+#   BMP, AVIF and HEIC up to 4096x4096 go on.
+# - Decoding runs under ImageMagick's resource limits, a memory ulimit and
+#   a timeout, one thread, first frame only.
+# The thumbnails live in $XDG_RUNTIME_DIR/dynamic-island/art (private, wiped
+# at logout), named by a hash of the source, and only the newest are kept.
+
+set -u
+command -v magick >/dev/null || exit 0
+
+MAX_URL=$((4 * 1024 * 1024))     # a data: URL carries the whole image
+MAX_BYTES=$((16 * 1024 * 1024))
+MAX_SIDE=4096
+SIZE=256
+KEEP=64
+
+dir="${XDG_RUNTIME_DIR:-/tmp}/dynamic-island"
+art="$dir/art"
+mkdir -p -m 700 "$dir" "$art" 2>/dev/null || exit 0
+# Ours, a real directory, private: nothing to follow or share.
+[[ -d $art && ! -L $art && -O $art && ! -L $dir && -O $dir ]] || exit 0
+chmod 700 "$art"
+
+url=$(head -c "$MAX_URL" | head -n 1 | tr -d '\r')
+[[ -n $url ]] || exit 0
+
+key=$(printf '%s' "$url" | sha256sum | cut -c1-32)
+out="$art/$key.png"
+if [[ -f $out && ! -L $out ]]; then
+  touch "$out"
+  printf 'file://%s\n' "$out"
+  exit 0
+fi
+
+work=$(mktemp -d "$art/.work.XXXXXX") || exit 0
+trap 'rm -rf "$work"' EXIT
+src="$work/src"
+
+case "$url" in
+  file://*)
+    path=${url#file://}
+    path=${path#localhost}
+    # Percent-decoding, as file URLs from players and the shelf use it.
+    path=$(printf '%s' "$path" | python3 -c 'import sys, urllib.parse; sys.stdout.write(urllib.parse.unquote(sys.stdin.read()))') || exit 0
+    [[ $path == /* && -f $path && -r $path ]] || exit 0
+    head -c $((MAX_BYTES + 1)) -- "$path" >"$src" 2>/dev/null || exit 0
+    ;;
+  https://* | http://*)
+    command -v curl >/dev/null || exit 0
+    # The URL goes in on stdin as curl config, not as an argument (arguments
+    # are visible to other users, and say what is playing).
+    quoted=${url//\\/\\\\}
+    quoted=${quoted//\"/\\\"}
+    printf 'url = "%s"\n' "$quoted" |
+      curl -K - -fsSL --proto '=https,http' --proto-redir '=https' --max-redirs 3 \
+        --connect-timeout 5 --max-time 15 --max-filesize "$MAX_BYTES" 2>/dev/null |
+      head -c $((MAX_BYTES + 1)) >"$src"
+    ;;
+  data:image/*\;base64,*)
+    printf '%s' "${url#*,}" | base64 -d 2>/dev/null | head -c $((MAX_BYTES + 1)) >"$src"
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+
+bytes=$(stat -c %s -- "$src" 2>/dev/null || echo 0)
+(( bytes > 0 && bytes <= MAX_BYTES )) || exit 0
+
+export MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1
+limits=(-limit memory 128MiB -limit map 256MiB -limit disk 0 -limit area 16MP
+  -limit width "$MAX_SIDE" -limit height "$MAX_SIDE" -limit list-length 8 -limit time 10)
+
+# Header only (no pixels): format and size of the first frame.
+read -r fmt w h < <(
+  ulimit -v 1048576
+  timeout 5 magick identify "${limits[@]}" -ping -format '%m %w %h\n' "$src[0]" 2>/dev/null | head -n 1
+)
+case "${fmt:-}" in
+  JPEG | PNG | WEBP | GIF | BMP | BMP3 | AVIF | HEIC) ;;
+  *) exit 0 ;;
+esac
+[[ ${w:-} =~ ^[0-9]+$ && ${h:-} =~ ^[0-9]+$ ]] || exit 0
+(( w > 0 && h > 0 && w <= MAX_SIDE && h <= MAX_SIDE )) || exit 0
+
+# The real decode, read as the format the header said and nothing else.
+(
+  ulimit -v 1048576
+  timeout 10 magick "${limits[@]}" -define jpeg:size=$((SIZE * 2))x$((SIZE * 2)) \
+    "$fmt:$src[0]" -auto-orient -thumbnail "${SIZE}x${SIZE}^" -gravity center -extent "${SIZE}x${SIZE}" -strip \
+    -define png:compression-level=3 "PNG32:$work/out.png" 2>/dev/null
+) || exit 0
+[[ -s $work/out.png ]] || exit 0
+mv -f -- "$work/out.png" "$out" || exit 0
+
+# Keep the newest few.
+ls -1t -- "$art"/*.png 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r -d '\n' rm -f --
+
+printf 'file://%s\n' "$out"

@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Hardware statistics collector for the Omarchy Dynamic Island.
+Emits line-delimited JSON with CPU, RAM, Disk, and GPU metrics every 1.5s.
+Runs only while the island is expanded on the Home page.
+"""
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+
+signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
+signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
+
+prev_idle = 0.0
+prev_tot = 0.0
+
+
+def read_cpu():
+    global prev_idle, prev_tot
+    try:
+        with open("/proc/stat", "r") as f:
+            fields = [float(x) for x in f.readline().split()[1:]]
+        idle = fields[3] + (fields[4] if len(fields) > 4 else 0.0)
+        tot = sum(fields)
+        pct = 0.0
+        if prev_tot > 0:
+            d_idle = idle - prev_idle
+            d_tot = tot - prev_tot
+            if d_tot > 0:
+                pct = max(0.0, min(100.0, 100.0 * (1.0 - (d_idle / d_tot))))
+        prev_idle = idle
+        prev_tot = tot
+        return round(pct, 1)
+    except Exception:
+        return 0.0
+
+
+def read_cpu_info():
+    model = "CPU"
+    try:
+        with open("/proc/cpuinfo", "r") as f:
+            for line in f:
+                if "model name" in line:
+                    m = re.search(r"(i[3579]-\w+|Ryzen\s+\d+\s+\w+|Ultra\s+\d+\s+\w+)", line)
+                    if m:
+                        model = m.group(1).strip()
+                    else:
+                        raw = line.split(":", 1)[1].strip()
+                        model = raw.replace("(R)", "").replace("(TM)", "").split("@")[0].strip()
+                    break
+    except Exception:
+        pass
+    return model
+
+
+def read_mem():
+    total, avail = 1.0, 1.0
+    try:
+        with open("/proc/meminfo", "r") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total = float(line.split()[1]) / (1024 * 1024)
+                elif line.startswith("MemAvailable:"):
+                    avail = float(line.split()[1]) / (1024 * 1024)
+        used = max(0.0, total - avail)
+        pct = (used / total) * 100.0 if total else 0.0
+        return round(used, 1), round(total, 1), round(pct, 1)
+    except Exception:
+        return 0.0, 1.0, 0.0
+
+
+def read_disk():
+    try:
+        st = os.statvfs("/")
+        tot = (st.f_blocks * st.f_frsize) / (1024**3)
+        avail = (st.f_bavail * st.f_frsize) / (1024**3)
+        used = max(0.0, tot - avail)
+        pct = (used / tot) * 100.0 if tot else 0.0
+        return round(used, 1), round(tot, 1), round(pct, 1)
+    except Exception:
+        return 0.0, 1.0, 0.0
+
+
+def read_cpu_temp():
+    temp = 0
+    try:
+        hwmon_dir = "/sys/class/hwmon"
+        if os.path.exists(hwmon_dir):
+            for h in os.listdir(hwmon_dir):
+                hp = os.path.join(hwmon_dir, h)
+                name_file = os.path.join(hp, "name")
+                name = ""
+                if os.path.isfile(name_file):
+                    try:
+                        with open(name_file, "r") as nf:
+                            name = nf.read().strip().lower()
+                    except Exception:
+                        pass
+                if "coretemp" in name or "k10temp" in name or "cpu" in name or "zenpower" in name:
+                    for item in os.listdir(hp):
+                        if item.startswith("temp") and item.endswith("_input"):
+                            try:
+                                with open(os.path.join(hp, item), "r") as tf:
+                                    t = float(tf.read().strip()) / 1000.0
+                                    if 15 < t < 115 and t > temp:
+                                        temp = t
+                            except Exception:
+                                pass
+        if temp == 0 and os.path.exists("/sys/class/thermal"):
+            for z in os.listdir("/sys/class/thermal"):
+                if z.startswith("thermal_zone"):
+                    p = os.path.join("/sys/class/thermal", z, "temp")
+                    if os.path.isfile(p):
+                        try:
+                            with open(p, "r") as tf:
+                                t = float(tf.read().strip()) / 1000.0
+                                if 15 < t < 115 and t > temp:
+                                    temp = t
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+    return int(round(temp))
+
+
+def read_gpu():
+    try:
+        out = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            timeout=0.35,
+        ).decode("utf-8").strip()
+        if out:
+            p = [x.strip() for x in out.split(",")]
+            name = p[0].replace("NVIDIA GeForce ", "").replace(" Laptop GPU", "")
+            util = float(p[1])
+            temp = int(float(p[2]))
+            mem_used = float(p[3]) / 1024.0
+            mem_tot = float(p[4]) / 1024.0
+            return True, name, round(util, 1), temp, round(mem_used, 1), round(mem_tot, 1)
+    except Exception:
+        pass
+    return False, "", 0.0, 0, 0.0, 0.0
+
+
+cpu_model = read_cpu_info()
+
+
+def sample():
+    cpu_pct = read_cpu()
+    mem_used, mem_tot, mem_pct = read_mem()
+    disk_used, disk_tot, disk_pct = read_disk()
+    cpu_temp = read_cpu_temp()
+    has_gpu, gpu_name, gpu_util, gpu_temp, gpu_used, gpu_tot = read_gpu()
+
+    return {
+        "cpu_pct": cpu_pct,
+        "cpu_temp": cpu_temp,
+        "cpu_model": cpu_model,
+        "mem_used": mem_used,
+        "mem_total": mem_tot,
+        "mem_pct": mem_pct,
+        "disk_used": disk_used,
+        "disk_total": disk_tot,
+        "disk_pct": disk_pct,
+        "has_gpu": has_gpu,
+        "gpu_name": gpu_name or "GPU",
+        "gpu_util": gpu_util,
+        "gpu_temp": gpu_temp,
+        "gpu_mem_used": gpu_used,
+        "gpu_mem_total": gpu_tot,
+    }
+
+
+def main():
+    try:
+        # Prime initial CPU tick
+        read_cpu()
+        time.sleep(0.08)
+
+        while True:
+            data = sample()
+            try:
+                sys.stdout.write(json.dumps(data) + "\n")
+                sys.stdout.flush()
+            except BrokenPipeError:
+                try:
+                    sys.stderr.close()
+                except Exception:
+                    pass
+                sys.exit(0)
+            time.sleep(1.5)
+    except (BrokenPipeError, KeyboardInterrupt):
+        try:
+            sys.stderr.close()
+        except Exception:
+            pass
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

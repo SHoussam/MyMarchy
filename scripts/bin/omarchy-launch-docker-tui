@@ -1,0 +1,10 @@
+#!/bin/bash
+# Wrapper for lazydocker in Omarchy
+
+LAZYDOCKER_BIN="$HOME/.local/bin/lazydocker"
+
+if omarchy-sudo-docker; then
+  exec pkexec /usr/bin/env TERM="${TERM:-xterm-256color}" "$LAZYDOCKER_BIN" "$@"
+else
+  exec "$LAZYDOCKER_BIN" "$@"
+fi

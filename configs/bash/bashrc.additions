@@ -1,0 +1,15 @@
+# =============================================================================
+# MyMarchy Environment & Path Additions
+# Place at bottom of ~/.bashrc
+# =============================================================================
+
+# Add local binaries, runtime tools, and CLI paths to PATH
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.opencode/bin:$HOME/.dotnet/tools:$HOME/.lmstudio/bin:$PATH"
+
+# Convenient aliases
+alias ll="eza -la --icons"
+alias ls="eza --icons"
+alias btop="btop"
+alias docker-ui="omarchy-launch-docker-tui"
+alias emergency-kill="omarchy-kill-active"
+alias nitrosense="damx"

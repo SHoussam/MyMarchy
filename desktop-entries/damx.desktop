@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=NitroSense (DAMX)
+GenericName=Acer NitroSense Control Center
+Comment=Div Acer Manager Max - Fan Control, Power Profiles & Battery Limiter
+Exec=damx
+Icon=damx
+Terminal=false
+Type=Application
+Categories=Utility;System;HardwareSettings;
+Keywords=acer;nitro;nitrosense;damx;fan;thermal;power;predator;
+StartupWMClass=DivAcerManagerMax

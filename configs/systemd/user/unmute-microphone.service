@@ -1,0 +1,12 @@
+[Unit]
+Description=Ensure microphone is unmuted on startup
+After=wireplumber.service pipewire.service
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'sleep 1; /usr/bin/wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0; /usr/bin/amixer -c 1 sset Dmic0 cap 2>/dev/null || true'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical-session.target

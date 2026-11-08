@@ -1,0 +1,18 @@
+{
+  "hoverExpand": true,
+  "hoverDelay": 80,
+  "collapseDelay": 420,
+  "idleClock": true,
+  "clockFormat": "ddd HH:mm",
+  "topOffset": 0,
+  "priority": [
+    "music",
+    "timer",
+    "recording"
+  ],
+  "peekOnTrackChange": false,
+  "peekOnAgentDone": false,
+  "autoExpandPermission": false,
+  "barHintDismissed": true,
+  "showStats": true
+}

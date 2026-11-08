@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Launcher for DivAcerManagerMax (Acer NitroSense Linux)
+
+if [ -x "$HOME/.local/share/damx/DivAcerManagerMax" ]; then
+    exec "$HOME/.local/share/damx/DivAcerManagerMax" "$@"
+elif command -v DivAcerManagerMax >/dev/null 2>&1; then
+    exec DivAcerManagerMax "$@"
+elif [ -x "/opt/damx/DivAcerManagerMax" ]; then
+    exec "/opt/damx/DivAcerManagerMax" "$@"
+else
+    echo "Error: DivAcerManagerMax not found in ~/.local/share/damx or PATH." >&2
+    echo "Please run: bash scripts/hardware/acer-nitrosense/install.sh" >&2
+    exit 1
+fi

@@ -1,0 +1,11 @@
+# OS & Editor artifacts
+.DS_Store
+*.swp
+*~
+*.bak.*
+.idea/
+.vscode/
+
+# Build and local cache
+__pycache__/
+*.pyc

@@ -1,0 +1,43 @@
+{
+  // Houssam's Flow Launcher Custom Keywords & Quick Actions
+  "personal": {
+    "icon": "",
+    "label": "Houssam Setup & Tools",
+    "description": "Flow Launcher shortcuts (wp, kill, remind, gh, setup)"
+  },
+  "personal.wallpaper": {
+    "icon": "󰸉",
+    "label": "Wallpaper Switcher (wp)",
+    "description": "wp - Flow Launcher Wallpaper Searcher",
+    "aliases": ["wp", "wallpaper"],
+    "action": "omarchy-menu toggle background"
+  },
+  "personal.kill": {
+    "icon": "󰅙",
+    "label": "Process Manager (kill)",
+    "description": "kill - Flow Launcher Process Killer (btop)",
+    "aliases": ["kill", "process", "btop"],
+    "action": "omarchy-launch-or-focus-tui btop"
+  },
+  "personal.remind": {
+    "icon": "󰂚",
+    "label": "Set Reminder (remind)",
+    "description": "remind - Flow Launcher Remind Me",
+    "aliases": ["remind", "reminder"],
+    "action": "omarchy-menu toggle reminder-set"
+  },
+  "personal.github": {
+    "icon": "",
+    "label": "GitHub Repositories (gh)",
+    "description": "gh - Open SHoussam GitHub repositories",
+    "aliases": ["gh", "github", "repos"],
+    "action": "omarchy-launch-webapp \"https://github.com/SHoussam?tab=repositories\""
+  },
+  "personal.setup": {
+    "icon": "",
+    "label": "My Setup Repo (setup)",
+    "description": "setup - Open ~/my-setup in editor",
+    "aliases": ["setup", "my-setup"],
+    "action": "omarchy-launch-editor ~/my-setup"
+  }
+}

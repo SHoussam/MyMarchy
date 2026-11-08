@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=SKlauncher
+GenericName=Minecraft Launcher
+Comment=Secure and modern Minecraft Launcher
+Exec=sklauncher %u
+Icon=sklauncher
+Terminal=false
+Categories=Game;Simulation;
+Keywords=game;minecraft;sklauncher;
+MimeType=x-scheme-handler/sklauncher;
+StartupNotify=true

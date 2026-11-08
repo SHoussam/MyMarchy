@@ -1,0 +1,49 @@
+#!/bin/bash
+# Real Liquid Glass for the island through the HyprGlass Hyprland plugin
+# (github.com/hyprnux/hyprglass), when it is loaded. The compositor sees what
+# is behind the island, so HyprGlass can bend and refract it; the island
+# itself cannot. This only uses the plugin, it never installs or loads it.
+#
+#   dynamic-island-hyprglass status         prints "active" when usable
+#   dynamic-island-hyprglass on dark|light  turn the island's glass on
+#   dynamic-island-hyprglass off            turn it off (Liquid Glass theme off,
+#                                           or the island going away)
+#
+# HyprGlass applies layer rules and presets only from Hyprland's config, so
+# the glass is set up there, with layer glass off (README, "Real Liquid
+# Glass"). The island switches it on only while it runs with the Liquid Glass
+# theme, with its dark / light look, at runtime (a Hyprland reload resets it
+# and the island sets it again).
+
+set -u
+command -v hyprctl >/dev/null || exit 0
+
+# Loaded, built for this Hyprland, and its shaders did not fail. ("active"
+# in its own status only means it is drawing something right now, and the
+# shaders stay "pending" until the first glass is drawn, so neither can be
+# waited for before turning the glass on.)
+active() {
+  local s
+  s=$(hyprctl -j hyprglass status 2>/dev/null) || return 1
+  grep -q '"versionCheck": *"match"' <<<"$s" && ! grep -q '"shaders": *"failed"' <<<"$s"
+}
+
+case "${1:-}" in
+  status)
+    active && echo active
+    ;;
+  on)
+    active || exit 1
+    theme=dark
+    [[ ${2:-} == light ]] && theme=light
+    hyprctl eval 'if hl.plugin.hyprglass then hl.plugin.hyprglass.config({ default_theme = "'"$theme"'", layers = { enabled = true } }) end' >/dev/null
+    ;;
+  off)
+    active || exit 0
+    hyprctl eval 'if hl.plugin.hyprglass then hl.plugin.hyprglass.config({ layers = { enabled = false } }) end' >/dev/null
+    ;;
+  *)
+    echo "usage: dynamic-island-hyprglass status | on dark|light | off" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,12 @@
+{
+    "workbench.colorTheme": "Aurora Nocturne Soft",
+    "security.promptForLocalFileProtocolHandling": false,
+    "google.cloud.project": "gen-lang-client-0530679907",
+    "antigravityPulse.showResetTime": true,
+    "antigravityPulse.clockFormat": "24h",
+    "google.cloud.billingQuotaProject": "dazzling-matrix-434422-u0",
+    "google.cloud.region": "africa-south1",
+    "jupyter.jupyterLaunchTimeout": 300000,
+    "antigravityPulse.showAICredits": false,
+    "files.autoSave": "afterDelay"
+}

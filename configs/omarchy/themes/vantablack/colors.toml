@@ -1,0 +1,32 @@
+mode = "dark"
+
+# Houssam's Obsidian + Cyan Dark + GlazeWM Lavender Theme Overlay
+accent = "#4cc9f0"
+selection = "#1e1e22"
+muted = "#9b9ba5"
+
+background = "#08080a"
+dark_background = "#050507"
+darker_background = "#000000"
+lighter_background = "#1a1b26"
+
+foreground = "#ffffff"
+dark_foreground = "#9b9ba5"
+light_foreground = "#ececec"
+bright_foreground = "#ffffff"
+
+red = "#f7768e"
+yellow = "#e0af68"
+orange = "#ff9500"
+green = "#34c759"
+cyan = "#4cc9f0"
+blue = "#7aa2f7"
+magenta = "#bea3c7"
+brown = "#75493d"
+
+bright_red = "#ff7a93"
+bright_yellow = "#ff9e64"
+bright_green = "#b9f27c"
+bright_cyan = "#4cc9f0"
+bright_blue = "#7da6ff"
+bright_magenta = "#bea3c7"

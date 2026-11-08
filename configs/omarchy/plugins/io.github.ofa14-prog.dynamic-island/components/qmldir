@@ -1,0 +1,16 @@
+module components
+singleton Theme 1.0 Theme.qml
+IslandButton 1.0 IslandButton.qml
+AgentSpinner 1.0 AgentSpinner.qml
+Equalizer 1.0 Equalizer.qml
+ProgressRing 1.0 ProgressRing.qml
+Page 1.0 Page.qml
+Art 1.0 Art.qml
+singleton ArtCache 1.0 ArtCache.qml
+Label 1.0 Label.qml
+Icon 1.0 Icon.qml
+Flag 1.0 Flag.qml
+LiquidGlass 1.0 LiquidGlass.qml
+GlassSheen 1.0 GlassSheen.qml
+ShimmerText 1.0 ShimmerText.qml
+singleton I18n 1.0 I18n.qml

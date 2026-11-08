@@ -1,0 +1,365 @@
+import QtQuick
+import "../components"
+
+// Compact island: content hugs the two ends (leading / trailing), the middle
+// stays clean black, exactly like a live activity around the camera. Leading
+// items are square and inset by the same amount from the top, bottom and
+// left edge, so they sit centered in the rounded end.
+Page {
+  id: view
+
+  property var island
+  readonly property string kind: island.primary
+  readonly property int lead: Math.round(island.compactH * 0.62)          // leading item size
+  readonly property int edge: Math.round((island.compactH - lead) / 2) + 2 // inset from the end
+  readonly property var session: island.agents.focusSession
+  readonly property var agentProfile: island.profile(session ? session.agent : "")
+  readonly property string agentState: island.agents.displayState(session)
+  readonly property bool agentWorking: agentState === "thinking" || agentState === "tool" || agentState === "compacting"
+
+  // Labels and icons come from AgentBridge.stateLook, shared by all views.
+  readonly property var look: island.agents.look(session)
+  function agentVerb() {
+    var s = session
+    if (agentState === "tool") return (s && s.tool ? s.tool : I18n.t("Çalışıyor")) + "…"
+    if (agentState === "input" && s && s.message) return I18n.t("Soru soruyor")
+    return I18n.t(look.label)
+  }
+
+  // ---------------------------------------------------------------- idle (day + time, smaller)
+  Page {
+    anchors.fill: parent
+    shown: view.kind === "idle"
+    Label {
+      anchors.centerIn: parent
+      visible: island.cfg("idleClock")
+      text: island.clockText
+      font.pixelSize: 12
+      strong: true
+      tabular: true
+      horizontalAlignment: Text.AlignHCenter
+      Accessible.name: I18n.t("Saat ") + text
+    }
+  }
+
+  // ---------------------------------------------------------------- just the time when any non-idle/non-music activity is shown
+  Label {
+    anchors.centerIn: parent
+    visible: view.kind !== "idle" && view.kind !== "music" && !island.splitIsland
+    text: island.shortClockText
+    font.pixelSize: 11
+    strong: true
+    tabular: true
+    color: Theme.secondary
+  }
+
+  // ---------------------------------------------------------------- music
+  Page {
+    anchors.fill: parent
+    shown: view.kind === "music"
+    Art {
+      id: musicArt
+      x: view.edge + 2
+      anchors.verticalCenter: parent.verticalCenter
+      width: view.lead; height: view.lead
+      radius: 5
+      source: island.music.artUrl
+    }
+    Label {
+      anchors.left: musicArt.right
+      anchors.leftMargin: 8
+      anchors.right: musicEq.left
+      anchors.rightMargin: 8
+      anchors.verticalCenter: parent.verticalCenter
+      text: island.music.title ? (island.music.artist ? island.music.title + " — " + island.music.artist : island.music.title) : (island.music.identity || "Music")
+      font.pixelSize: 12
+      strong: true
+      color: Theme.fg
+    }
+    Equalizer {
+      id: musicEq
+      anchors.right: parent.right
+      anchors.rightMargin: view.edge + 4
+      anchors.verticalCenter: parent.verticalCenter
+      playing: island.music.playing
+      color: island.music.accent
+      barWidth: 3
+      maxHeight: Math.round(view.lead * 0.72)
+    }
+  }
+
+  // ---------------------------------------------------------------- two agents
+  // Two agents at work: one per half (island.splitIsland). Each half shows
+  // its agent's most urgent session; clicking it opens that agent's page.
+  component AgentHalf: Item {
+    id: half
+    property string agentId: ""
+    readonly property var sessions: island.agents.sessionList.filter(x => x.agent === agentId)
+    readonly property var session: {
+      void island.agents.revision
+      return sessions.find(x => island.agents.pending.some(r => r.session === x.id))
+        || sessions.find(x => island.agents.needsYou(x))
+        || sessions.find(x => island.agents.isBusy(x)) || sessions[0] || null
+    }
+    readonly property var prof: island.profile(agentId)
+    readonly property string st: island.agents.displayState(session)
+    readonly property bool working: st === "thinking" || st === "tool" || st === "compacting"
+    readonly property bool waits: st === "waiting" || st === "input" || island.agents.pending.some(r => r.agent === agentId)
+    readonly property var look: island.agents.look(session)
+
+    Item {
+      id: halfLead
+      x: view.edge
+      width: view.lead; height: view.lead
+      anchors.verticalCenter: parent.verticalCenter
+      AgentSpinner {
+        agent: half.agentId
+        anchors.centerIn: parent
+        size: Math.round(view.lead * 0.82)
+        visible: half.look.icon === ""
+        running: half.working
+      }
+      Icon {
+        anchors.centerIn: parent
+        visible: half.look.icon !== ""
+        name: half.look.icon
+        size: Math.round(view.lead * 0.8)
+        color: half.look.tone === "green" ? Theme.green : half.look.tone === "red" ? Theme.red : Theme.secondary
+      }
+    }
+    Row {
+      anchors.right: parent.right
+      anchors.rightMargin: view.edge + 2
+      anchors.left: halfLead.right
+      anchors.leftMargin: 8
+      anchors.verticalCenter: parent.verticalCenter
+      layoutDirection: Qt.RightToLeft
+      spacing: 6
+      Rectangle {
+        visible: half.waits
+        width: 8; height: 8; radius: 4
+        color: half.prof.color
+        anchors.verticalCenter: parent.verticalCenter
+        SequentialAnimation on opacity {
+          running: parent.visible && !Theme.reduceMotion
+          loops: Animation.Infinite
+          NumberAnimation { to: 0.25; duration: 600; easing.type: Easing.InOutSine }
+          NumberAnimation { to: 1; duration: 600; easing.type: Easing.InOutSine }
+        }
+      }
+      ShimmerText {
+        anchors.verticalCenter: parent.verticalCenter
+        width: Math.min(implicitWidth, parent.width - (half.waits ? 14 : 0) - 20)
+        label: half.waits ? I18n.t("İzin gerekiyor")
+          : half.st === "tool" && half.session && half.session.tool ? half.session.tool + "…" : I18n.t(half.look.label)
+        running: half.working
+        font.pixelSize: 13
+        font.weight: Font.DemiBold
+        baseColor: half.look.tone === "green" ? Theme.green : half.look.tone === "red" ? Theme.red
+          : half.look.tone === "dim" ? Theme.secondary : half.prof.color
+        glowColor: half.prof.glow
+      }
+      // Whose half it is.
+      Icon {
+        anchors.verticalCenter: parent.verticalCenter
+        source: island.logoFor(half.agentId)
+        name: source ? "" : "sparkles"
+        size: 14
+        color: half.prof.color
+        opacity: 0.9
+      }
+    }
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      onClicked: island.showAgent(half.agentId)
+    }
+    Accessible.role: Accessible.Button
+    Accessible.name: prof.product + ", " + (waits ? I18n.t("İzin gerekiyor") : I18n.t(look.label))
+  }
+
+  Page {
+    anchors.fill: parent
+    shown: view.kind === "agent" && island.splitIsland
+    AgentHalf {
+      x: 0
+      width: (parent.width - island.splitGap) / 2
+      height: parent.height
+      agentId: island.splitOrder[0] || ""
+    }
+    AgentHalf {
+      x: parent.width - width
+      width: (parent.width - island.splitGap) / 2
+      height: parent.height
+      agentId: island.splitOrder[1] || ""
+    }
+  }
+
+  // ---------------------------------------------------------------- agent
+  Page {
+    anchors.fill: parent
+    shown: view.kind === "agent" && !island.splitIsland
+
+    Item {
+      id: agentLead
+      x: view.edge
+      width: view.lead; height: view.lead
+      anchors.verticalCenter: parent.verticalCenter
+      AgentSpinner {
+        agent: view.session ? view.session.agent : island.agentId
+        anchors.centerIn: parent
+        size: Math.round(view.lead * 0.82)
+        visible: view.look.icon === ""
+        running: view.agentWorking
+      }
+      Icon {
+        anchors.centerIn: parent
+        visible: view.look.icon !== ""
+        name: view.look.icon
+        size: Math.round(view.lead * 0.8)
+        color: view.look.tone === "green" ? Theme.green : view.look.tone === "red" ? Theme.red : Theme.secondary
+      }
+    }
+
+    Row {
+      anchors.right: parent.right
+      anchors.rightMargin: view.edge + 4
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: 7
+
+      // Waiting for you: a pulsing dot reads instantly in the corner of your eye.
+      Rectangle {
+        visible: view.agentState === "waiting" || view.agentState === "input"
+        width: 8; height: 8; radius: 4
+        color: view.agentProfile.color
+        anchors.verticalCenter: parent.verticalCenter
+        SequentialAnimation on opacity {
+          running: parent.visible && !Theme.reduceMotion
+          loops: Animation.Infinite
+          NumberAnimation { to: 0.25; duration: 600; easing.type: Easing.InOutSine }
+          NumberAnimation { to: 1; duration: 600; easing.type: Easing.InOutSine }
+        }
+      }
+      ShimmerText {
+        anchors.verticalCenter: parent.verticalCenter
+        width: Math.min(implicitWidth, 168)
+        label: view.agentVerb()
+        running: view.agentWorking
+        font.pixelSize: 13
+        font.weight: Font.DemiBold
+        baseColor: view.look.tone === "green" ? Theme.green : view.look.tone === "red" ? Theme.red
+          : view.look.tone === "dim" ? Theme.secondary : view.agentProfile.color
+        glowColor: view.agentProfile.glow
+      }
+      Label {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: view.agentWorking && view.session && view.session.turnStartedAt > 0
+        font.pixelSize: 13
+        tabular: true
+        color: Theme.tertiary
+        text: view.session ? island.duration(island.nowMs - view.session.turnStartedAt) : ""
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- recording
+  Page {
+    anchors.fill: parent
+    shown: view.kind === "recording"
+    Item {
+      x: view.edge
+      width: view.lead; height: view.lead
+      anchors.verticalCenter: parent.verticalCenter
+      Rectangle {
+        anchors.centerIn: parent
+        width: Math.round(view.lead * 0.55); height: width; radius: width / 2
+        color: Theme.red
+        SequentialAnimation on opacity {
+          running: view.kind === "recording" && !Theme.reduceMotion
+          loops: Animation.Infinite
+          NumberAnimation { to: 0.35; duration: 700; easing.type: Easing.InOutSine }
+          NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
+        }
+      }
+    }
+    Label {
+      anchors.right: parent.right
+      anchors.rightMargin: view.edge + 6
+      anchors.verticalCenter: parent.verticalCenter
+      text: island.timer.format(island.nowMs - island.recording.startedAt, false)
+      font.pixelSize: 16
+      strong: true
+      tabular: true
+      color: Theme.red
+      Accessible.name: I18n.t("Ekran kaydı ") + text
+    }
+  }
+
+  // ---------------------------------------------------------------- shelf
+  // Only when you double-click the shelf bubble into the middle.
+  Page {
+    anchors.fill: parent
+    shown: view.kind === "shelf"
+    Item {
+      x: view.edge
+      width: view.lead; height: view.lead
+      anchors.verticalCenter: parent.verticalCenter
+      ProgressRing {
+        anchors.fill: parent
+        thickness: 2.5
+        progress: Math.max(0.04, island.shelf.fullness)
+        color: Theme.blue
+      }
+      Icon {
+        anchors.centerIn: parent
+        name: "shelf"
+        size: Math.round(view.lead * 0.5)
+        color: Theme.blue
+      }
+    }
+    Label {
+      anchors.right: parent.right
+      anchors.rightMargin: view.edge + 6
+      anchors.verticalCenter: parent.verticalCenter
+      text: I18n.count(island.shelf.count, "item")
+      font.pixelSize: 14
+      strong: true
+      color: Theme.blue
+      Accessible.name: I18n.t("Raf, ") + text
+    }
+  }
+
+  // ---------------------------------------------------------------- timer
+  Page {
+    anchors.fill: parent
+    shown: view.kind === "timer"
+    Item {
+      x: view.edge
+      width: view.lead; height: view.lead
+      anchors.verticalCenter: parent.verticalCenter
+      ProgressRing {
+        anchors.fill: parent
+        thickness: 2.5
+        progress: island.timer.mode === "countdown" ? 1 - island.timer.progress : 1
+        color: Theme.orange
+      }
+      Icon {
+        anchors.centerIn: parent
+        name: island.timer.paused ? "pause" : "timer"
+        size: Math.round(view.lead * 0.5)
+        color: Theme.orange
+      }
+    }
+    Label {
+      anchors.right: parent.right
+      anchors.rightMargin: view.edge + 6
+      anchors.verticalCenter: parent.verticalCenter
+      text: island.timer.display
+      font.pixelSize: 16
+      strong: true
+      tabular: true
+      color: Theme.orange
+      Accessible.name: I18n.t("Kalan süre ") + text
+    }
+  }
+}
