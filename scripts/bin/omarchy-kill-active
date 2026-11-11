@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Terminate active window and completely kill its underlying process
+# Close focused window or stop active application cleanly.
+# Multi-window applications (Chromium, Terminals, VS Code) will only exit
+# the currently focused window without killing the application process or sibling windows.
 
 set -euo pipefail
 
@@ -9,30 +11,80 @@ if [ -z "$win" ] || [ "$win" = "{}" ]; then
 fi
 
 class=$(echo "$win" | jq -r '.class // empty')
+initial_class=$(echo "$win" | jq -r '.initialClass // empty')
 pid=$(echo "$win" | jq -r '.pid // empty')
 addr=$(echo "$win" | jq -r '.address // empty')
 
-# Protect desktop shell / bar from being killed
-if [ "$class" = "omarchy-shell" ] || [ "$class" = "waybar" ]; then
+# Protect desktop shell, waybar, and developer assistant/system processes
+if [ "$class" = "omarchy-shell" ] || [ "$class" = "waybar" ] || [ "$class" = "antigravity" ]; then
     exit 0
 fi
 
 hypr_pid=$(pgrep -x Hyprland 2>/dev/null | head -n 1 || true)
-
-if [ -n "$pid" ] && [ "$pid" -gt 1 ] && [ "$pid" != "$hypr_pid" ]; then
-    # Try SIGTERM first on child processes and parent
-    pkill -TERM -P "$pid" 2>/dev/null || true
-    kill -TERM "$pid" 2>/dev/null || true
-
-    # Wait brief moment, then SIGKILL if still running
-    sleep 0.1
-    if kill -0 "$pid" 2>/dev/null; then
-        pkill -KILL -P "$pid" 2>/dev/null || true
-        kill -KILL "$pid" 2>/dev/null || true
-    fi
+if [ -z "$pid" ] || [ "$pid" -le 1 ] || [ "$pid" = "$hypr_pid" ]; then
+    exit 0
 fi
 
-# Also ensure window is removed from Hyprland
-if [ -n "$addr" ]; then
-    hyprctl dispatch closewindow "address:$addr" >/dev/null 2>&1 || true
+# Function to cleanly close active window in Hyprland
+close_window() {
+    if [ -n "$addr" ]; then
+        hyprctl dispatch "hl.dsp.window.close({ window = \"address:$addr\" })" >/dev/null 2>&1 || \
+        hyprctl dispatch "hl.dsp.window.close()" >/dev/null 2>&1 || true
+    else
+        hyprctl dispatch "hl.dsp.window.close()" >/dev/null 2>&1 || true
+    fi
+}
+
+# Normalize names for matching
+comm=$(cat "/proc/$pid/comm" 2>/dev/null || true)
+target_string="$(echo "${class} ${initial_class} ${comm}" | tr '[:upper:]' '[:lower:]')"
+
+# 1. Chromium & Browsers
+is_browser=0
+if [[ "$target_string" =~ chrom|chrome|brave|edge|opera|firefox ]]; then
+    is_browser=1
+fi
+
+# 2. Terminals (Ghostty, Foot, Kitty, Alacritty, WezTerm, etc.)
+is_terminal=0
+if [[ "$target_string" =~ ghostty|foot|kitty|alacritty|wezterm|terminal|xterm|urxvt|console|bash|zsh|fish ]]; then
+    is_terminal=1
+fi
+
+# 3. Visual Studio Code & Editors
+is_code=0
+if [[ "$target_string" =~ code|vscode|vscodium|cursor ]]; then
+    is_code=1
+fi
+
+# For Chromium, Terminals, and VS Code:
+# Remove kill entirely. Only exit / close the currently focused window.
+if [ "$is_browser" -eq 1 ] || [ "$is_terminal" -eq 1 ] || [ "$is_code" -eq 1 ]; then
+    close_window
+    exit 0
+fi
+
+# For any other application: check if there are other open windows for this app/PID
+other_windows=$(hyprctl clients -j 2>/dev/null | jq --arg addr "$addr" --arg pid "$pid" --arg class "$class" '
+    [.[] | select(.address != $addr and (.pid == ($pid | tonumber) or .class == $class))] | length
+' 2>/dev/null || echo 0)
+
+if [ "$other_windows" -gt 0 ]; then
+    # Other windows exist for this application, only close the focused window
+    close_window
+    exit 0
+fi
+
+# For standalone applications:
+# Close window first, then stop gracefully (SIGTERM) if the process is lingering.
+# Never kill immediately with SIGKILL.
+close_window
+
+# Brief pause to allow graceful exit from close event
+sleep 0.3
+
+# If process is still lingering in background, send SIGTERM (stop)
+if kill -0 "$pid" 2>/dev/null; then
+    pkill -TERM -P "$pid" 2>/dev/null || true
+    kill -TERM "$pid" 2>/dev/null || true
 fi

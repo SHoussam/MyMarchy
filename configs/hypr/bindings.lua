@@ -107,13 +107,78 @@ o.bind("CTRL + SHIFT + ESCAPE", "Task Manager (btop)", { tui = "btop", focus = t
 -- Win + Shift + S: Snipping Tool Screenshot (replaces default Google Maps shortcut)
 o.rebind("SUPER + SHIFT + S", "Screenshot (Snipping Tool)", "omarchy-capture-screenshot")
 
--- Win + W: Force kill active window and completely terminate its running process
-o.rebind("SUPER + W", "Kill active app process", "/home/hous/.local/bin/omarchy-kill-active")
+-- Win + W: Close focused window / stop active application cleanly (exits window for Chromium, terminals, and VS Code)
+o.rebind("SUPER + W", "Close window or stop active app", (os.getenv("HOME") or "") .. "/.local/bin/omarchy-kill-active")
 
 -- 15. Laptop Lid Switch Handling
 -- Plugged in: Clamshell single-screen on external display (keep running)
 -- On battery: True SSD Hibernation (save state and power off)
-o.rebind("switch:on:Lid Switch", nil, "/home/hous/.config/hypr/scripts/lid-close-handler.sh", { locked = true })
+o.rebind("switch:on:Lid Switch", nil, (os.getenv("HOME") or "") .. "/.config/hypr/scripts/lid-close-handler.sh", { locked = true })
 o.rebind("switch:off:Lid Switch", nil, "omarchy-hyprland-monitor-clamshell", { locked = true })
+
+-- =============================================================================
+-- 16. Universal "Phone Back & Forward" (ALT + Z / ALT + X)
+-- =============================================================================
+local function send_shortcut_once(mods, key)
+  hl.dispatch(hl.dsp.send_key_state({ mods = mods, key = key, state = "down" }))
+  hl.timer(function()
+    hl.dispatch(hl.dsp.send_key_state({ mods = mods, key = key, state = "up" }))
+  end, { timeout = 50, type = "oneshot" })
+end
+
+local function has_exclusive_layer()
+  for _, layer in ipairs(hl.get_layers()) do
+    if layer.mapped and layer.interactivity == 1 then
+      return true
+    end
+  end
+  return false
+end
+
+local function universal_nav(direction)
+  return function()
+    local window = hl.get_active_window()
+    if has_exclusive_layer() or not window then
+      if direction == "back" then
+        send_shortcut_once("", "ESCAPE")
+      end
+      return
+    end
+
+    local class = (window.class or ""):lower()
+
+    if class:find("jetbrains", 1, true) or class:find("obsidian", 1, true) then
+      send_shortcut_once("CTRL ALT", direction == "back" and "LEFT" or "RIGHT")
+    elseif class:find("antigravity", 1, true) or class:find("code", 1, true) then
+      if direction == "back" then
+        send_shortcut_once("CTRL ALT", "minus")
+      else
+        send_shortcut_once("CTRL SHIFT", "minus")
+      end
+    else
+      send_shortcut_once("ALT", direction == "back" and "LEFT" or "RIGHT")
+    end
+  end
+end
+
+o.bind("ALT + Z", "Universal Back", universal_nav("back"))
+o.bind("ALT + X", "Universal Forward", universal_nav("forward"))
+
+-- =============================================================================
+-- 17. 60%-Friendly Shared Aliases (work identically on 60% and 100% keyboards)
+-- =============================================================================
+o.bind("SUPER + apostrophe", "Toggle Quake console (60% alias)", hl.dsp.workspace.toggle_special("qconsole"))
+o.bind("SUPER + SHIFT + apostrophe", "Move window to Quake console (60% alias)", hl.dsp.window.move({ workspace = "special:qconsole", follow = false }))
+
+o.bind("SUPER + ALT + R", "Screenrecording (60% alias)", "omarchy-capture-screenrecording --stop-recording || omarchy-menu toggle trigger.capture.screenrecord")
+o.bind("SUPER + ALT + C", "Color picker (60% alias)", "pkill hyprpicker || hyprpicker -a")
+o.bind("SUPER + ALT + X", "Extract text (OCR) from screenshot (60% alias)", "omarchy-capture-text")
+
+o.bind("SUPER + bracketleft", "Restore window width (60% alias)", "omarchy-hyprland-window-width restore")
+o.bind("SUPER + bracketright", "Save window width (60% alias)", "omarchy-hyprland-window-width save")
+
+o.bind("SUPER + CTRL + M", "Toggle laptop display (60% alias)", "omarchy-hyprland-monitor-internal toggle")
+o.bind("SUPER + CTRL + ALT + M", "Toggle laptop display mirroring (60% alias)", "omarchy-hyprland-monitor-internal-mirror toggle")
+
 
 
