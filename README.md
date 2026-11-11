@@ -1,10 +1,11 @@
 # 🌌 MyMarchy
 
-> **The ultimate Arch Linux & Omarchy desktop environment** — combining the razor-sharp tiling ergonomics of Windows **GlazeWM**, the speed of **Flow Launcher Universal Search**, an **Apple-inspired Liquid Glass Dynamic Island** with live real-time hardware telemetry, **Hyprland 0.56+ native multi-touch trackpad gestures**, and **industrial-grade laptop power and Acer Nitro fan management**.
+> **The ultimate Arch Linux & Omarchy desktop environment** — combining Windows **GlazeWM** tiling ergonomics, **Universal Phone Back (`Alt+Z`/`Alt+X`)**, seamless **60% + 100% keyboard collaboration (`keyd` CapsLock `IJKL` layer + shared aliases)**, **Flow Launcher Universal Search**, an **Apple-inspired Liquid Glass Dynamic Island** (with hardware telemetry, OpenCode/LM Studio agent tracking, KDE Connect phone status, Focus Mode, and a Qt6 recovery companion app), **always-on RNNoise mic noise cancellation**, **Hyprland 0.56+ native trackpad gestures**, and **laptop clamshell/hibernation + Acer Nitro thermal governance**.
 
 [![Arch Linux](https://img.shields.io/badge/Arch_Linux-1793D1?logo=arch-linux&logoColor=white)](#)
 [![Hyprland 0.56+](https://img.shields.io/badge/Hyprland-Lua_Engine-00ADD8?logo=hyprland&logoColor=white)](#)
 [![Quickshell](https://img.shields.io/badge/Quickshell-QML_Dynamic_Island-34C759)](#)
+[![Qt6 Companion](https://img.shields.io/badge/Qt6-Dynamic_Island_App-41CD52)](#)
 [![GlazeWM](https://img.shields.io/badge/GlazeWM-1:1_Tiling_Shortcuts-9B59B6)](#)
 
 ---
@@ -14,15 +15,15 @@
 2. [Hardware Profile](#-hardware-profile)
 3. [File-by-File Catalog & Directory Guide](#-file-by-file-catalog--directory-guide)
    - [Hyprland Window Manager (`configs/hypr/`)](#1-hyprland-window-manager-configshypr)
-   - [Omarchy Shell & Flow Launcher (`configs/omarchy/`)](#2-omarchy-shell--flow-launcher-configsomarchy)
-   - [Dynamic Island Hardware Plugin (`configs/omarchy/plugins/`)](#3-dynamic-island-hardware-plugin)
-   - [Custom Utilities & Scripts (`scripts/bin/`)](#4-custom-utilities--scripts-scriptsbin)
-   - [Hardware & Power Scripts (`scripts/hardware/` & `scripts/hypr/`)](#5-hardware--power-scripts)
-   - [Systemd Services (`configs/systemd/`)](#6-systemd-services-configssystemd)
-   - [Terminal, IDE & Developer Configs](#7-terminal-ide--developer-configs)
+   - [Omarchy Shell, Branding & Flow Launcher (`configs/omarchy/`)](#2-omarchy-shell-branding--flow-launcher-configsomarchy)
+   - [Dynamic Island Plugin (`configs/omarchy/plugins/io.github.ofa14-prog.dynamic-island/`)](#3-dynamic-island-plugin)
+   - [Dynamic Island Companion App (`apps/dynamic-island/`)](#4-dynamic-island-companion-app-appsdynamic-island)
+   - [Custom Utilities & Scripts (`scripts/bin/`)](#5-custom-utilities--scripts-scriptsbin)
+   - [Audio Pipeline & Systemd Services (`configs/pipewire/`, `configs/wireplumber/`, `configs/systemd/`)](#6-audio-pipeline--systemd-services)
+   - [60% Keyboard Layer, Micro MIME & Developer Configs](#7-60-keyboard-layer-micro-mime--developer-configs)
 4. [Complete Shortcuts & Gestures Cheat Sheet](#-complete-shortcuts--gestures-cheat-sheet)
 5. [Installation Guide](#-installation-guide)
-   - [Option A: Automated One-Line Install](#option-a-automated-install)
+   - [Option A: Automated Install](#option-a-automated-install)
    - [Option B: Autonomous AI Agent Install (`prompt.md`)](#option-b-autonomous-ai-agent-install)
    - [Option C: Manual Step-by-Step](#option-c-manual-step-by-step)
 6. [Verification & Health Checks](#-verification--health-checks)
@@ -31,42 +32,35 @@
 
 ## 🏛 Architecture & Philosophy
 
-**MyMarchy** transforms an Arch Linux / Omarchy installation into a cohesive workstation. Instead of fighting muscle memory, it ports the most productive components of Windows 11 and macOS power-user tooling natively into Wayland:
+**MyMarchy** transforms an Arch Linux / Omarchy installation into a cohesive workstation that eliminates rough edges across window management, dual keyboards, AI workflows, phone integration, and audio hardware:
 
-1. **GlazeWM 1:1 Keybinding Layer**:
-   - Full directional focus with `Alt + H/J/K/L` and `Alt + Arrows`.
-   - Window swapping with `Alt + Shift + H/J/K/L`.
-   - Workspaces `1..9` with `Alt + 1..9` and `Alt + Shift + 1..9`.
-   - Proportional resizing with `Alt + U/P/O/I` and dedicated resize modal submap (`Alt + R`).
-2. **Flow Launcher Universal Search**:
-   - `Shift + Space` summons a centered search bar.
-   - Built-in keyword aliases: `wp` (wallpaper picker), `kill` (task manager), `remind` (reminders), `gh` (GitHub repositories), and `setup` (workspace editor).
-3. **Liquid Glass Dynamic Island with Live Hardware Telemetry**:
-   - Native QML notch floating gracefully at the top of the screen.
-   - Hover-to-expand behavior with translucent frosted glass.
-   - Custom hardware monitoring engine tracking real-time CPU %, RAM usage, NVIDIA GPU load, and SSD storage.
-4. **Fluid Multi-Touch Gestures (Hyprland 0.56+)**:
-   - **2-Finger Pinch**: Live animated desktop magnifier / zoom (`cursor_zoom`, mode `live`).
-   - **3-Finger Horizontal Swipe**: Travel horizontally between applications (`scroll_move`).
-   - **3-Finger Vertical Swipe**: Grab active window and travel / reposition it (`move`).
-   - **4-Finger Horizontal Swipe**: 1:1 animated workspace switcher (`workspace`).
-   - **4-Finger Vertical Swipe**: Swap window up / down.
-5. **Intelligent Laptop Power & Thermal Governance**:
-   - Clamshell docking: Closing the lid when plugged in routes everything seamlessly to the external high-refresh display without sleeping.
-   - Battery protection: Closing the lid on battery triggers instant SSD hibernation to eliminate drain.
-   - Acer Nitro thermal control: Custom DKMS driver (`linuwu_sense`) and DAMX management daemon for fan profiles.
+1. **GlazeWM 1:1 Keybinding Layer + Universal Phone Back**:
+   - Directional focus & swapping with `Alt + H/J/K/L` and `Alt + Arrows`, workspaces `Alt + 1..9`, direct resize (`Alt + U/P/O/I`) and modal resize submap (`Alt + R`).
+   - **Universal "Phone Back & Forward" (`Alt + Z` / `Alt + X`)**: App-aware back/forward chord—sends `Escape` inside exclusive shell overlays/launchers, `Ctrl+Alt+Left/Right` in JetBrains IDEs & Obsidian, `Ctrl+Alt+-` / `Ctrl+Shift+-` in Antigravity/VS Code, and `Alt+Left/Right` everywhere else.
+   - **Smart Close (`Super + W`)**: Cleanly closes only the focused window in Chromium, terminals, VS Code, and multi-window apps without killing sibling windows or Antigravity/shell processes.
+2. **Seamless 60% + 100% Keyboard Collaboration**:
+   - Hardware-scoped `keyd` profile (`/etc/keyd/nuobida-60.conf` matching USB ID `342d:e50e`) turns `CapsLock` into `overload(nav, capslock)` so tapping keeps normal `CapsLock` while holding `CapsLock` exposes an inverted-T arrow cluster (`I/J/K/L`), `U/O` (`Home/End`), `[/]` (`PageUp/PageDown`), `Esc` (`` ` ``), `Backspace` (`Delete`), `P` (`PrintScreen`), `F1..F12`, and media/brightness keys—combining natively with `Super`/`Ctrl`/`Alt`/`Shift` while leaving the laptop's 100% keyboard untouched.
+   - Shared ergonomic aliases in `bindings.lua` (`Super+'` Quake console, `Super+Alt+R/C/X` screenrecord/colorpicker/OCR, `Super+[/]` window width, `Super+Ctrl+M` display toggles) work identically on both keyboards.
+3. **Liquid Glass Dynamic Island + Native Qt6 Companion App**:
+   - Native QML notch floating at top-center (`SurfaceHost.qml` hardens layer surfaces across clamshell/suspend monitor transitions), featuring custom **HS** monogram branding, **Focus Mode** (`Super + Alt + F`), hardware telemetry (`CPU`, `RAM`, `GPU`, `Disk`), **OpenCode v2** & **LM Studio** (`llama-server`) model telemetry + compact activity capsule, **icon-only tabs**, and **KDE Connect** live phone status, battery ring, and connect/disconnect/call peek banners.
+   - Companion Qt6 Quick desktop/CLI utility (`apps/dynamic-island`) pinned to the dock (`480x484` floating card) and Flow Launcher (`restart-island`) to inspect, revive, or restart the shell in one keystroke.
+4. **Always-On RNNoise Mic Noise Cancellation + Persistent Unmute Guardian**:
+   - Standalone PipeWire filter-chain client (`mic-noise-cancellation.service`) running `librnnoise_ladspa` over the internal digital mic and exposing `rnnoise_mic_source` as `@DEFAULT_AUDIO_SOURCE@`.
+   - `mic-guardian.py` D-Bus `PrepareForSleep` listener + patched WirePlumber `state-routes.lua` guarantee the physical microphone never wakes up muted after boot or lid resume.
+5. **Fluid Multi-Touch Gestures, Clamshell Power & Micro Default Editor**:
+   - 2-finger pinch zoom (`cursor_zoom`), 3-finger window travel/move, and 4-finger workspace swipes (`input.lua`).
+   - AC clamshell / battery hibernation (`lid-close-handler.sh` + `30-laptop-lid.conf`) and Acer Nitro DAMX fan profiles.
+   - `micro` configured as default `.txt`, `.text`, and `.md` opener via Omarchy TUI (`micro.desktop` + `user-text-extension.xml`).
 
 ---
 
 ## 💻 Hardware Profile
 
-This configuration was engineered on and tuned for:
-- **Laptop**: Acer Nitro V 15 (ANV15-52)
-- **CPU**: Intel Core i9-13900H (14 cores, 20 threads)
-- **GPU**: NVIDIA GeForce RTX Laptop GPU + Intel Iris Xe Graphics (Hybrid Prime)
-- **Internal Display**: 1920x1080 @ 180Hz (hardware max) with 1.25x scaling
-- **External Display**: 1920x1080 @ 240Hz on `HDMI-A-1` with 1.25x scaling
-- **Keyboard**: UK English (`gb`) with 250ms repeat delay, 35Hz repeat rate
+Engineered on and tuned for:
+- **Laptop**: Acer Nitro V 15 (ANV15-52) — Intel Core i9-13900H + NVIDIA RTX Laptop GPU (Hybrid Prime)
+- **Internal Display**: 1920x1080 @ 180Hz (`eDP-1`) with 1.25x scaling
+- **External Display**: 1920x1080 @ 240Hz (`HDMI-A-1`) with 1.25x scaling
+- **Keyboards**: UK English (`gb`) built-in 100% keyboard + NUOBIDA 60% mechanical USB keyboard (`342d:e50e`)
 
 ---
 
@@ -74,244 +68,188 @@ This configuration was engineered on and tuned for:
 
 ### 1. Hyprland Window Manager (`configs/hypr/`)
 
-| File | Target Destination | Work Description | When & Why Needed | Agent / User Usage |
-|---|---|---|---|---|
-| `hyprland.lua` | `~/.config/hypr/hyprland.lua` | Master entry point for Hyprland's Lua parser. Requires Omarchy bootstrap and personal modules. | Entry point executed on Hyprland startup. Loads user overrides cleanly without clobbering upstream updates. | Placed in `~/.config/hypr/`. Kept clean; all logic is split into modular files. |
-| `bindings.lua` | `~/.config/hypr/bindings.lua` | Definitive keybinding map. Binds GlazeWM shortcuts, Flow Launcher, task manager, screenshots, process killer, and lid switch. | Maps all keyboard interaction. Solves muscle-memory friction when transitioning from Windows GlazeWM. | Copy to `~/.config/hypr/bindings.lua`. Reload with `hyprctl reload`. |
-| `input.lua` | `~/.config/hypr/input.lua` | Configures UK English keyboard, fast repeat, sloppy focus, natural touchpad scroll, and 2/3/4-finger touchpad gestures. | Configures mouse, touchpad gestures, and keyboard timings. Enables macOS-like zoom and trackpad swipes. | Copy to `~/.config/hypr/input.lua`. Tested via `hyprctl reload`. |
-| `monitors.lua` | `~/.config/hypr/monitors.lua` | Explicit multi-monitor resolution, refresh rate (180Hz internal, 240Hz external), and fractional scaling (1.25). | Prevents Wayland from defaulting to 60Hz or wrong scales. Fixes HDMI black-screen bugs on lid toggle. | Adjust monitor IDs (`eDP-1`, `HDMI-A-1`) if hardware differs. |
-| `looknfeel.lua` | `~/.config/hypr/looknfeel.lua` | Window gaps (2px in/out), 1px border styling (`#bea3c7` lavender active, `#a1a1a1` inactive), 6px rounding, and terminal opacity (0.91). | Gives the desktop the exact GlazeWM minimal aesthetic with subtle window borders and blur. | Copy to `~/.config/hypr/looknfeel.lua`. |
-| `autostart.lua` | `~/.config/hypr/autostart.lua` | Startup hook for audio services. Executes PipeWire `wpctl` and `amixer` unmuting on session initialization. | Fixes persistent Linux issue where digital microphone (Dmic0) boots up muted. | Copy to `~/.config/hypr/autostart.lua`. |
-| `xdph.conf` | `~/.config/hypr/xdph.conf` | XDG Desktop Portal Hyprland configuration. Enables window sharing tokens and preview share picker. | Enables screen sharing in Chromium, Discord, Slack, and OBS. | Copy to `~/.config/hypr/xdph.conf`. |
-| `hyprsunset.conf` | `~/.config/hypr/hyprsunset.conf` | Blue light filter / night light profile manager. | Prevents random screen tinting and configures neutral color profiles. | Copy to `~/.config/hypr/hyprsunset.conf`. |
-| `scripts/lid-close-handler.sh` | `~/.config/hypr/scripts/lid-close-handler.sh` | Smart script executed on `switch:on:Lid Switch`. Detects AC power: if docked, enters clamshell mode; if on battery, hibernates. | Prevents battery drain when closing laptop, and prevents accidental suspension when connected to an external monitor. | Must be executable (`chmod +x`). Triggered directly by `bindings.lua`. |
-| `scripts/setup-system-lid-hibernation.sh` | `~/.config/hypr/scripts/setup-system-lid-hibernation.sh` | Sudo setup script that configures `systemd-logind` and enables NVIDIA hibernate services. | Root-level script run once during machine provisioning. | Run with `sudo bash setup-system-lid-hibernation.sh`. |
+| File | Target Destination | Description |
+|---|---|---|
+| `hyprland.lua` | `~/.config/hypr/hyprland.lua` | Entry point loading Omarchy defaults, personal Lua modules, and floating rule for `^dynamic-island$` (`480x484`). |
+| `bindings.lua` | `~/.config/hypr/bindings.lua` | GlazeWM shortcuts, Flow Launcher, Focus Mode (`Super+Alt+F`), Smart Close (`Super+W`), `Alt+Z`/`Alt+X` Universal Phone Back/Forward, and shared 60% aliases. |
+| `input.lua` | `~/.config/hypr/input.lua` | UK English (`gb`) layout, 250ms/35Hz repeat, sloppy focus, natural touchpad scroll, and 2/3/4-finger gestures. |
+| `monitors.lua` | `~/.config/hypr/monitors.lua` | Explicit refresh rates (`eDP-1` 180Hz, `HDMI-A-1` 240Hz) and 1.25 fractional scaling. |
+| `looknfeel.lua` | `~/.config/hypr/looknfeel.lua` | 2px inner/outer gaps, 1px borders (`#bea3c7` active), 6px rounding, and 0.91 terminal opacity. |
+| `autostart.lua` | `~/.config/hypr/autostart.lua` | Startup unmute hook alongside PipeWire/systemd initialization. |
+| `xdph.conf` & `hyprsunset.conf` | `~/.config/hypr/` | XDG Desktop Portal Hyprland screen-share tokens and neutral color profile. |
+| `scripts/lid-close-handler.sh` | `~/.config/hypr/scripts/` | Clamshell on external AC power; true SSD hibernation on battery. |
+| `scripts/setup-system-lid-hibernation.sh` | `~/.config/hypr/scripts/` | Root helper configuring `logind` lid rules and NVIDIA power services. |
 
 ---
 
-### 2. Omarchy Shell & Flow Launcher (`configs/omarchy/`)
+### 2. Omarchy Shell, Branding & Flow Launcher (`configs/omarchy/`)
 
-| File | Target Destination | Work Description | When & Why Needed | Agent / User Usage |
-|---|---|---|---|---|
-| `shell.json` | `~/.config/omarchy/shell.json` | JSON configuration of the top status bar (Islands), system dock, idle timeouts, and active plugins. | Cleans up the top bar: removes redundant date/time clutter, creates space for Dynamic Island, and positions tray icons. | Copy to `~/.config/omarchy/shell.json`. |
-| `shell.toml` | `~/.config/omarchy/shell.toml` | Font configuration for the Omarchy status bar (size 10). | Ensures consistent typography across bar widgets. | Copy to `~/.config/omarchy/shell.toml`. |
-| `dynamic-island.json` | `~/.config/omarchy/dynamic-island.json` | Runtime behavior settings for the Dynamic Island: hover delay (80ms), collapse delay (420ms), clock format, stats toggle. | Controls how the liquid notch behaves when hovered over or clicked. | Copy to `~/.config/omarchy/dynamic-island.json`. |
-| `extensions/omarchy-menu.jsonc` | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | Custom search aliases: `wp` (wallpaper), `kill` (process manager), `remind` (reminder), `gh` (GitHub), `setup` (editor). | Replicates Flow Launcher keyword triggers in Omarchy's application menu. | Copy to `~/.config/omarchy/extensions/omarchy-menu.jsonc`. |
-| `themes/vantablack/colors.toml` | `~/.config/omarchy/themes/vantablack/colors.toml` | Color theme specification: Obsidian black background (`#08080a`), bright Cyan accent (`#4cc9f0`), Lavender border (`#bea3c7`). | Deep OLED dark theme with high contrast and cyan indicators. | Copy to `~/.config/omarchy/themes/vantablack/colors.toml`. |
+| File | Target Destination | Description |
+|---|---|---|
+| `shell.json` | `~/.config/omarchy/shell.json` | Top `lobo.islands` bar (`hous.menu`, left `omarchy.tray`, opaque bar), disabled stock `omarchy.menu`, and pinned `dynamic-island` + `org.kde.kdeconnect.app` dock apps. |
+| `shell.toml` | `~/.config/omarchy/shell.toml` | Bar typography configuration. |
+| `dynamic-island.json` | `~/.config/omarchy/dynamic-island.json` | Runtime notch config (`hoverExpand`, `priority: ["agent", "music", "timer", "recording"]`, `idleClock`). |
+| `extensions/omarchy-menu.jsonc` | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | Flow Launcher keywords: `wp`, `kill`, `remind`, `gh`, `setup`, and `restart-island` (`fix-island`, `revive-island`). |
+| `plugins/hous.menu/` | `~/.config/omarchy/plugins/hous.menu/` | Top-left bar widget displaying `hs_logo.png` (left-click menu, right-click terminal). |
+| `themes/vantablack/colors.toml` | `~/.config/omarchy/themes/vantablack/colors.toml` | Obsidian background (`#08080a`), cyan accent (`#4cc9f0`), lavender borders (`#bea3c7`). |
 
 ---
 
-### 3. Dynamic Island Hardware Plugin
+### 3. Dynamic Island Plugin
 
 Located in `configs/omarchy/plugins/io.github.ofa14-prog.dynamic-island/`:
 
-| Component | Target Destination | Work Description | When & Why Needed | Agent / User Usage |
-|---|---|---|---|---|
-| `bin/dynamic-island-hardware` | `.../bin/dynamic-island-hardware` | Multi-threaded Python telemetry daemon. Computes real-time CPU % from `/proc/stat`, RAM from `/proc/meminfo`, NVIDIA GPU % via `nvidia-smi`, and disk space via `statvfs`. | Provides fast hardware telemetry without spawning heavy external subprocesses. | Executable script called automatically by QML service. |
-| `services/HardwareService.qml` | `.../services/HardwareService.qml` | QML service interfacing with `dynamic-island-hardware` over stdout JSON streams. Exposes reactive properties. | Bridges backend Linux kernel statistics to Quickshell QML properties. | Imported in `Island.qml`. |
-| `pages/HomePage.qml` | `.../pages/HomePage.qml` | UI page rendering live hardware telemetry cards (CPU, RAM, GPU, Disk) with progress bars, badges, and status colors. | Displayed when opening the Dynamic Island. Replaces generic window list with real-time hardware status. | Rendered inside the expanded notch. |
-| `Island.qml` | `.../Island.qml` | Main notch geometry, liquid glass shader, hover mechanics, and multi-theme color bindings. | The visual notch itself: animates between compact pill, clock, music visualizer, and hardware hub. | Core QML file for the plugin. |
-| `icons/*.svg` | `.../icons/` | Custom vector icons for CPU (`cpu.svg`), RAM (`ram.svg`), GPU (`gpu.svg`), Disk (`disk.svg`), and Activity (`activity.svg`). | Crisp UI icons matching theme accent colors. | Referenced by QML delegates. |
+| Component | Target Destination | Description |
+|---|---|---|
+| `Island.qml` & `SurfaceHost.qml` | `.../Island.qml`, `.../SurfaceHost.qml` | Liquid Glass notch + dynamically hosted Wayland layer surfaces (`recoverSurface()`, placeholder screen filtering for clamshell/wake resilience). |
+| `pages/CompactView.qml` | `.../pages/CompactView.qml` | Compact pill with custom `HS` monogram (`assets/hs_logo.png`), live model mini-capsule + split-pill rendering, and KDE Connect green connection dot. |
+| `pages/HomePage.qml` & `pages/TabStrip.qml` | `.../pages/` | Live hardware telemetry cards, responsive KDE Connect phones card (single/dual/offline + battery ring), and icon-only tab strip. |
+| `bin/dynamic-island-hardware` & `services/HardwareService.qml` | `.../bin/`, `.../services/` | Low-overhead Python/QML telemetry stream (CPU, RAM, NVIDIA GPU, NVMe). |
+| `agents/opencode/dynamic-island.js` & `bin/dynamic-island-{scan,transcript}` | `.../agents/`, `.../bin/` | OpenCode v2 `ServerPlugin` bridge, interactive TTY filtering, and SQLite live transcript feed. |
+| `bin/dynamic-island-lmstudio` & `icons/brand/lmstudio.svg` | `.../bin/`, `.../icons/brand/` | `/proc` tick + `/api/v1/models` probe with GUI load/unload controls in `AgentPage.qml` & `AgentBridge.qml`. |
+| `bin/dynamic-island-phones` & `services/PhoneService.qml` | `.../bin/`, `.../services/` | Zero-idle-CPU session D-Bus watcher for KDE Connect reachability, battery, SFTP mount state, and incoming call peek banners. |
 
 ---
 
-### 4. Custom Utilities & Scripts (`scripts/bin/`)
+### 4. Dynamic Island Companion App (`apps/dynamic-island/`)
 
-| File | Target Destination | Work Description | When & Why Needed | Agent / User Usage |
-|---|---|---|---|---|
-| `omarchy-kill-active` | `~/.local/bin/omarchy-kill-active` | Queries Hyprland active window JSON, resolves PID, issues `SIGTERM` followed by `SIGKILL` after 100ms, and closes the window. | Closes uncooperative applications (e.g. frozen games, heavy IDEs) instantly without crashing the compositor. Protects desktop shell from self-kill. | Bound to `Super + W`. Also callable directly from terminal. |
-| `omarchy-launch-docker-tui` | `~/.local/bin/omarchy-launch-docker-tui` | Launches `lazydocker` in a floating terminal with proper terminal type and privilege escalation. | Provides immediate graphical/TUI monitoring and control of Docker containers. | Callable via `docker-ui` alias or Flow Launcher. |
-| `sklauncher` | `~/.local/bin/sklauncher` | Resolves system Java (Java 17/21) or mise shims and launches `SKlauncher.jar`. | Portable, robust Minecraft launcher runner. | Executable wrapper mapped to desktop entry. |
-| `damx` | `~/.local/bin/damx` | Resolves DivAcerManagerMax binary in `~/.local/share/damx`, `/usr/bin`, or `/opt`. | CLI command to launch Acer NitroSense thermal and fan control center. | Type `damx` in terminal or press `Shift + Space` and search "NitroSense". |
+| File | Target Destination | Description |
+|---|---|---|
+| `apps/dynamic-island/` (C++17 / Qt6 Quick) | Built via `./bin/install-local` -> `~/.local/bin/dynamic-island` | Native floating diagnostic/recovery GUI (`480x484`) + CLI (`--status --json`, `--restart`, `--revive`, `--toggle`, `--focus`, `--reset`), desktop file, and SVG icon. |
 
 ---
 
-### 5. Hardware & Power Scripts
+### 5. Custom Utilities & Scripts (`scripts/bin/`)
 
-| File | Target Destination | Work Description | When & Why Needed | Agent / User Usage |
-|---|---|---|---|---|
-| `scripts/hardware/acer-nitrosense/install.sh` | Provisioning Script | Installs DKMS kernel driver `linuwu_sense`, adds user to group, sets up `damx-daemon.service`, and builds DAMX. | Grants hardware control over Acer Nitro fans, performance power profiles, and battery charging thresholds. | Run with `sudo bash scripts/hardware/acer-nitrosense/install.sh`. |
-| `configs/systemd/system/30-laptop-lid.conf` | `/etc/systemd/logind.conf.d/30-laptop-lid.conf` | Overrides `systemd-logind`: `HandleLidSwitch=hibernate`, `HandleLidSwitchExternalPower=ignore`, `HandleLidSwitchDocked=ignore`. | Prevents sleep loops, allows external display clamshell gaming, and guarantees 0% battery drain in backpacks. | Copied to `/etc/systemd/logind.conf.d/` with sudo. |
-
----
-
-### 6. Systemd Services (`configs/systemd/`)
-
-| File | Target Destination | Work Description | When & Why Needed | Agent / User Usage |
-|---|---|---|---|---|
-| `unmute-microphone.service` | `~/.config/systemd/user/unmute-microphone.service` | Oneshot user systemd service waiting for WirePlumber and PipeWire, then unmuting the default audio source and Dmic0. | Solves boot-time muted microphone issues on laptops. | Enabled via `systemctl --user enable --now unmute-microphone.service`. |
+| File | Target Destination | Description |
+|---|---|---|
+| `omarchy-kill-active` | `~/.local/bin/omarchy-kill-active` | Bound to `Super + W`. Cleanly closes focused browser/terminal/VS Code/multi-window sibling windows, protects `omarchy-shell`/`waybar`/`antigravity`, and gracefully falls back to `SIGTERM`. |
+| `omarchy-toggle-focus-mode` | `~/.local/bin/omarchy-toggle-focus-mode` (symlinked as `focus-mode`) | Bound to `Super + Alt + F`. Toggles Dynamic Island `hoverExpand` in `dynamic-island.json`. |
+| `mic-guardian.py` | `~/.local/bin/mic-guardian.py` | Listens to `logind` `PrepareForSleep` on D-Bus to keep PipeWire `@DEFAULT_AUDIO_SOURCE@` & ALSA `Dmic0` unmuted across boot and resume. |
+| `mic-noise-cancellation-set-default` | `~/.local/bin/mic-noise-cancellation-set-default` | Waits for `rnnoise_mic_source` and assigns it as the default PipeWire input source. |
+| `kdeconnect-sftp-automount` | `~/.local/bin/kdeconnect-sftp-automount` | Keeps Android KDE Connect SFTP cleanly mounted on reconnect/resume and clears stale `sshfs` mounts (`KDECONNECT_DEVICE_ID` configurable). |
+| `omarchy-launch-docker-tui`, `sklauncher`, `damx` | `~/.local/bin/` | Floating `lazydocker` launcher, Java-aware SKlauncher wrapper, and DivAcerManagerMax CLI wrapper. |
 
 ---
 
-### 7. Terminal, IDE & Developer Configs
+### 6. Audio Pipeline & Systemd Services
 
-| File | Target Destination | Work Description | When & Why Needed | Agent / User Usage |
-|---|---|---|---|---|
-| `configs/foot/foot.ini` | `~/.config/foot/foot.ini` | Foot terminal emulator configuration: JetBrainsMono Nerd Font (size 8), 14px padding, CSI-u key-bindings, beam cursor (`#507D00`). | Fast Wayland terminal with clean font rendering and proper Alt+Shift keybindings. | Copy to `~/.config/foot/foot.ini`. |
-| `configs/bash/bashrc.additions` | Appended to `~/.bashrc` | Environment variables adding `~/.local/bin`, `~/.bun/bin`, `~/.opencode/bin`, and `~/.dotnet/tools` to `PATH`. | Ensures all installed CLI tools and custom scripts are immediately discoverable. | Append to `~/.bashrc`. |
-| `configs/antigravity/settings.json` | `~/.config/Antigravity/User/settings.json` | IDE settings for Antigravity: `Aurora Nocturne Soft` theme, 24h clock, autosave, GCP project configuration. | Restores personalized IDE workflow. | Copy to `~/.config/Antigravity/User/settings.json`. |
-| `configs/mcp/mcp_config.template.json` | `~/.gemini/config/mcp_config.json` | Template for AI MCP tools (Chrome DevTools, Context7, GitHub, NotebookLM, Playwright, PowerPoint, Shadcn). | Equips AI coding assistants with access to system tools, web browsers, and repositories. | Copy and replace `<YOUR_GITHUB_PERSONAL_ACCESS_TOKEN>`. |
+| File | Target Destination | Description |
+|---|---|---|
+| `configs/pipewire/mic-noise-cancellation.conf` & `90-rnnoise-mic.conf` | `~/.config/pipewire/` | Standalone PipeWire filter-chain running `librnnoise_ladspa` (`noise_suppressor_stereo`) exposing `rnnoise_mic_source`. |
+| `configs/wireplumber/scripts/device/state-routes.lua` | `~/.config/wireplumber/scripts/device/state-routes.lua` | Overrides WirePlumber route persistence so audio input routes never save or restore `mute: true`. |
+| `configs/systemd/user/mic-guardian.service` | `~/.config/systemd/user/mic-guardian.service` | Keeps `mic-guardian.py` active across the graphical session. |
+| `configs/systemd/user/mic-noise-cancellation.service` | `~/.config/systemd/user/mic-noise-cancellation.service` | Starts RNNoise PipeWire host and sets `rnnoise_mic_source` as default input on login. |
+| `configs/systemd/user/kdeconnect-indicator.service` | `~/.config/systemd/user/kdeconnect-indicator.service` | Keeps KDE Connect tray indicator visible in `omarchy.tray`. |
+| `configs/systemd/user/kdeconnect-sftp-automount.service` | `~/.config/systemd/user/kdeconnect-sftp-automount.service` | Maintains phone SFTP mount automatically on reconnect & wake. |
+| `configs/systemd/system/30-laptop-lid.conf` | `/etc/systemd/logind.conf.d/30-laptop-lid.conf` | `HandleLidSwitch=hibernate`, `HandleLidSwitchExternalPower=ignore`, `HandleLidSwitchDocked=ignore`. |
+| `scripts/hardware/acer-nitrosense/install.sh` | Provisioning Script | Builds `linuwu-sense-dkms-git` and sets up `damx-daemon.service`. |
+
+---
+
+### 7. 60% Keyboard Layer, Micro MIME & Developer Configs
+
+| File | Target Destination | Description |
+|---|---|---|
+| `configs/keyd/nuobida-60.conf` | `/etc/keyd/nuobida-60.conf` | Scoped to NUOBIDA 60% (`342d:e50e`). Maps `CapsLock` hold to `nav` (`I/J/K/L` arrows, `U/O` Home/End, `[/]` PgUp/Dn, `Esc=\``, `Bksp=Del`, `P=SysRq`, `1..==F1..F12`, media/brightness). |
+| `desktop-entries/micro.desktop` & `configs/mime/user-text-extension.xml` | `~/.local/share/{applications,mime/packages}/` | Sets `micro` (`omarchy-launch-tui micro %F`) as default handler for `.txt`, `.text`, and `.md`. |
+| `configs/foot/foot.ini` & `configs/ghostty/config` | `~/.config/{foot,ghostty}/` | Minimal JetBrainsMono Nerd Font 8pt terminals with CSI-u bindings and translucent styling. |
+| `configs/starship.toml` & `configs/fastfetch/` | `~/.config/` | Cyberpunk powerline prompt + Fastfetch HUD featuring Unicode HS block art (`hs_logo.txt`). |
+| `configs/bash/bashrc.additions` | Appended to `~/.bashrc` | PATH additions (`~/.local/bin`, `~/.bun/bin`, `~/.opencode/bin`, `~/.dotnet/tools`, `~/.lmstudio/bin`), aliases, and login `fastfetch`. |
+| `configs/antigravity/settings.json` & `configs/mcp/mcp_config.template.json` | `~/.config/Antigravity/User/` & `~/.gemini/` | IDE settings and sanitized MCP template (`<YOUR_GITHUB_PERSONAL_ACCESS_TOKEN>` placeholder). |
 
 ---
 
 ## ⌨️ Complete Shortcuts & Gestures Cheat Sheet
 
 ### 🪟 GlazeWM Tiling & Window Management
+| Shortcut | Action |
+|---|---|
+| `Alt + Enter` | Launch Terminal |
+| `Alt + Shift + Q` | Close Window |
+| `Alt + H/J/K/L` or `Alt + Arrows` | Focus left / down / up / right window |
+| `Alt + Shift + H/J/K/L` or `Arrows` | Swap window in direction |
+| `Alt + 1 .. 9` / `Alt + Shift + 1 .. 9` | Focus / Move window to workspace 1–9 |
+| `Alt + A` / `Alt + S` / `Alt + D` | Previous / Next / Recent workspace |
+| `Alt + F` / `Alt + V` / `Alt + Shift + Space` | Fullscreen / Toggle split / Toggle floating |
+| `Alt + U` / `Alt + P` / `Alt + O` / `Alt + I` | Resize window width & height directly |
+| `Alt + R` | Modal resize submap (`HJKL`/Arrows, `Esc`/`Enter` to exit) |
+| `Alt + Shift + P` | Pause/resume keybindings (gaming/VMs) |
 
+### ⌨️ Universal Navigation, Ergonomics & 60% Collaboration
 | Shortcut | Action | Description |
 |---|---|---|
-| `Alt + Enter` | Launch Terminal | Opens Foot terminal emulator |
-| `Alt + Shift + Q` | Close Window | Closes currently focused window |
-| `Alt + H` / `Alt + Left` | Focus Left | Focuses adjacent window to the left |
-| `Alt + L` / `Alt + Right` | Focus Right | Focuses adjacent window to the right |
-| `Alt + K` / `Alt + Up` | Focus Up | Focuses adjacent window above |
-| `Alt + J` / `Alt + Down` | Focus Down | Focuses adjacent window below |
-| `Alt + Shift + H` / `Left` | Swap Left | Moves active window to the left |
-| `Alt + Shift + L` / `Right` | Swap Right | Moves active window to the right |
-| `Alt + Shift + K` / `Up` | Swap Up | Moves active window up |
-| `Alt + Shift + J` / `Down` | Swap Down | Moves active window down |
-| `Alt + 1 .. 9` | Focus Workspace | Switches to workspace 1 through 9 |
-| `Alt + Shift + 1 .. 9` | Move to Workspace | Moves focused window to workspace 1 through 9 |
-| `Alt + F` | Toggle Fullscreen | Maximizes window |
-| `Alt + V` | Toggle Tiling Split | Toggles between horizontal and vertical split |
-| `Alt + Shift + Space` | Toggle Floating | Toggles floating mode for active window |
-| `Alt + U` / `Alt + P` | Resize Width | Shrinks / expands window width |
-| `Alt + I` / `Alt + O` | Resize Height | Shrinks / expands window height |
-| `Alt + R` | Resize Submap | Enters modal resize mode (`HJKL` / Arrows, `Esc` to exit) |
-| `Alt + Shift + P` | Pause Keybindings | Pauses all keybindings for gaming/VMs (`Alt+Shift+P` to resume) |
+| `Alt + Z` / `Alt + X` | **Universal Phone Back / Forward** | `Esc` on layers, `Ctrl+Alt+Left/Right` in JetBrains/Obsidian, `Ctrl+Alt+-`/`Ctrl+Shift+-` in VS Code/Antigravity, `Alt+Left/Right` elsewhere |
+| `CapsLock` *(hold, 60% kbd)* | **Nav Layer (`keyd`)** | `I/J/K/L` Arrows, `U/O` Home/End, `[]` PgUp/PgDn, `Esc` `` ` ``, `Bksp` Del, `P` PrtSc, `1..=` F1–F12, `M , . / ; '` Media/Brightness |
+| `Super + '` / `Super + Shift + '` | Quake Console *(60% alias)* | Toggle / move window to `special:qconsole` |
+| `Super + [` / `Super + ]` | Window Width *(60% alias)* | Restore / save window width |
+| `Super + Alt + R / C / X` | Capture Tools *(60% alias)* | Screenrecording / Hyprpicker / OCR text capture |
+| `Super + Ctrl + M` / `Super + Ctrl + Alt + M` | Display Toggle *(60% alias)* | Toggle internal monitor / mirror mode |
+| `Super + W` | **Smart Close / Stop** | Closes focused window cleanly (multi-window safe for browsers/terminals/VS Code) |
+| `Ctrl + Shift + Escape` | Task Manager | Launches floating `btop` |
+| `Super + Shift + S` | Region Screenshot | `omarchy-capture-screenshot` / `omasnap` |
 
-### 🚀 Flow Launcher & Search Keywords
-
+### 🚀 Flow Launcher & Dynamic Island
 | Trigger | Action | Description |
 |---|---|---|
-| `Shift + Space` | Universal Search | Opens centered Flow Launcher style search bar |
-| `wp` | Wallpaper Switcher | Quick action to change desktop background |
-| `kill` | Process Manager | Launches `btop` system monitor |
-| `remind` | Reminder Menu | Quick reminder / countdown timer creator |
-| `gh` | GitHub Profile | Opens GitHub repositories in browser |
-| `setup` | Workspace Editor | Opens setup configurations in IDE |
-
-### ⚡ Windows Ergonomics & Emergency Tools
-
-| Shortcut | Tool | Description |
-|---|---|---|
-| `Ctrl + Shift + Escape` | Task Manager | Launches terminal task manager (`btop`) |
-| `Super + Shift + S` | Screenshot Tool | Interactive region screen capture (`omasnap`) |
-| `Super + W` | Emergency Killer | Forcefully kills active application process (`SIGTERM` + `SIGKILL`) |
-| `Ctrl + Alt + Space` | Dynamic Island | Expands / collapses top liquid glass notch |
-| `Ctrl + Alt + V` | Clipboard History | Opens clipboard manager in Dynamic Island |
-| `Ctrl + Alt + D` | Toggle Status Bar | Hides / reveals the top status bar |
+| `Shift + Space` | Universal Search | Flow Launcher styled Omarchy search (`wp`, `kill`, `remind`, `gh`, `setup`, `restart-island`) |
+| `Ctrl + Alt + Space` / `Super + Alt + I` | Dynamic Island | Expand / collapse top notch |
+| `Super + Alt + F` | **Focus Mode** | Toggle hover-to-expand on Dynamic Island |
+| `Super + Alt + T` | Notch Timer | Open timer tab directly |
+| `Ctrl + Alt + V` / `Ctrl + Alt + D` | Clipboard / Top Bar | Open clipboard panel / toggle Islands top bar |
 
 ### 🖐 Multi-Touch Trackpad Gestures
-
-| Gesture | Action | Feature |
-|---|---|---|
-| **2-Finger Pinch** | Desktop Magnifier | Smooth live cursor zoom in and out (`cursor_zoom`) |
-| **3-Finger Horizontal Swipe** | Application Travel | Smoothly travel across horizontal window columns (`scroll_move`) |
-| **3-Finger Vertical Swipe** | Window Reposition | Grab and reposition the focused window (`move`) |
-| **4-Finger Horizontal Swipe** | Workspace Switch | 1:1 animated gesture to transition between virtual desktops |
-| **4-Finger Vertical Swipe** | Window Swap | Swap window vertically up / down |
+| Gesture | Action |
+|---|---|
+| **2-Finger Pinch** | Live cursor magnifier zoom (`cursor_zoom`) |
+| **3-Finger Horizontal** | Travel between windows (`scroll_move`) |
+| **3-Finger Vertical** | Grab & move focused window (`move`) |
+| **4-Finger Horizontal** | 1:1 animated workspace switch |
+| **4-Finger Vertical** | Swap window vertically |
 
 ---
 
 ## 🛠 Installation Guide
 
 ### Option A: Automated Install
-Run the included turnkey installer:
-
 ```bash
 git clone https://github.com/SHoussam/MyMarchy.git ~/MyMarchy
 cd ~/MyMarchy
 chmod +x install.sh
-./install.sh
-```
-
-To automatically apply root-level laptop lid hibernation and NVIDIA power services, run:
-```bash
 ./install.sh --with-system
 ```
-
----
+*(Omit `--with-system` for user-space-only installation without `sudo`.)*
 
 ### Option B: Autonomous AI Agent Install
-If you are using an agentic coding assistant (Gemini, Claude, Antigravity, Cursor, Roo-Code, etc.), provide it with `prompt.md`:
-
+Give `prompt.md` to your coding agent:
 ```text
 Please read ~/MyMarchy/prompt.md and execute the complete setup out of the box.
 ```
 
-The agent will read the instructions, verify prerequisites, deploy all configs to their exact paths, configure systemd units, and run verification diagnostics automatically.
-
----
-
 ### Option C: Manual Step-by-Step
-
-#### 1. Install Base Packages
-```bash
-sudo pacman -S --needed hyprland quickshell foot btop grim slurp jq \
-  pipewire pipewire-pulse wireplumber alsa-utils dkms linux-headers base-devel git eza bat fzf
-yay -S --needed omasnap lazydocker-bin
-```
-
-#### 2. Copy Configurations
-```bash
-mkdir -p ~/.config/hypr/scripts ~/.config/omarchy/extensions ~/.config/omarchy/themes/vantablack ~/.config/omarchy/plugins ~/.local/bin ~/.local/share/applications
-
-cp -r configs/hypr/* ~/.config/hypr/
-cp -r configs/omarchy/* ~/.config/omarchy/
-cp configs/foot/foot.ini ~/.config/foot/foot.ini
-cp scripts/bin/* ~/.local/bin/
-chmod +x ~/.local/bin/* ~/.config/hypr/scripts/*
-```
-
-#### 3. Setup Dynamic Island & Upstream Plugins
-```bash
-cp -r configs/omarchy/plugins/io.github.ofa14-prog.dynamic-island ~/.config/omarchy/plugins/
-git clone --depth 1 https://github.com/hominluo/omarchy-launcher.git ~/.config/omarchy/plugins/io.github.hominluo.launcher
-git clone --depth 1 https://github.com/DanielLob-o/Islands.git ~/.config/omarchy/plugins/lobo.islands
-```
-
-#### 4. Enable Services & Hardware Power
-```bash
-# User audio unmute service
-cp configs/systemd/user/unmute-microphone.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now unmute-microphone.service
-
-# System lid hibernation (root)
-sudo cp configs/systemd/system/30-laptop-lid.conf /etc/systemd/logind.conf.d/
-sudo systemctl kill -s HUP systemd-logind.service
-sudo systemctl enable nvidia-suspend.service nvidia-hibernate.service nvidia-resume.service
-
-# Acer NitroSense (if applicable)
-sudo bash scripts/hardware/acer-nitrosense/install.sh
-```
-
-#### 5. Reload Hyprland
-```bash
-hyprctl reload
-```
+See [`prompt.md`](prompt.md) for the exact Arch Linux `pacman` + AUR package list, KDE Connect `ufw` firewall rules, system service setup, and verification checklist.
 
 ---
 
 ## 🔍 Verification & Health Checks
 
-Verify your deployment with these sanity checks:
-
 ```bash
-# 1. Check Hyprland configuration syntax
-hyprctl configerrors
+# 1. Hyprland syntax
+hyprctl reload && hyprctl configerrors
 
-# 2. Test hardware telemetry daemon directly
+# 2. keyd 60% profile & daemon
+sudo keyd check /etc/keyd/nuobida-60.conf && systemctl is-active keyd.service
+
+# 3. User services & default RNNoise microphone
+systemctl --user is-active mic-guardian.service mic-noise-cancellation.service kdeconnect-indicator.service kdeconnect-sftp-automount.service
+pactl get-default-source
+
+# 4. Dynamic Island telemetry & companion app health
+dynamic-island --status --json
 python3 ~/.config/omarchy/plugins/io.github.ofa14-prog.dynamic-island/bin/dynamic-island-hardware
 
-# 3. Check active display refresh rates
-hyprctl monitors
-
-# 4. Confirm systemd microphone service is running
-systemctl --user status unmute-microphone.service
-
-# 5. Confirm system logind lid switch rules
+# 5. Micro default MIME & logind lid configuration
+xdg-mime query default text/plain && xdg-mime query default text/markdown
 systemd-analyze cat-config systemd/logind.conf | grep HandleLidSwitch
 ```
 

@@ -9,3 +9,5 @@
 # Build and local cache
 __pycache__/
 *.pyc
+apps/dynamic-island/build/
+*.pro.user*
