@@ -1,0 +1,13 @@
+[Unit]
+Description=KDE Connect Tray Indicator
+After=graphical-session.target app-org.kde.kdeconnect.daemon@autostart.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/kdeconnect-indicator
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

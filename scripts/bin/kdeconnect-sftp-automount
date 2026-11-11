@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""Ensure KDE Connect SFTP stays mounted for SM-G991B on local reconnects."""
+
+import argparse
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+from gi.repository import Gio, GLib, GLibUnix
+
+KDECONNECT_BUS = "org.kde.kdeconnect"
+DEFAULT_DEVICE_ID = "ae75912115194fe69f34dcb0ef98ce80"
+DEFAULT_STORAGE_SUBPATH = "storage/emulated/0"
+MOUNT_TIMEOUT_MS = 20000
+HEALTH_TIMEOUT_SEC = 3
+
+
+def log(msg: str) -> None:
+    print(f"[kdeconnect-sftp-automount] {msg}", flush=True)
+
+
+def is_in_mountinfo(mount_point: str) -> bool:
+    target = os.path.normpath(mount_point)
+    try:
+        with open("/proc/self/mountinfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.split(" - ", 1)[0].split()
+                if len(parts) >= 5:
+                    mp = parts[4].replace("\\040", " ").replace("\\011", "\t")
+                    if os.path.normpath(mp) == target:
+                        return True
+    except OSError as exc:
+        log(f"warning: could not read /proc/self/mountinfo: {exc}")
+    return False
+
+
+def is_mount_healthy(mount_point: str, storage_subpath: str) -> bool:
+    check_path = os.path.join(mount_point, storage_subpath)
+    try:
+        res = subprocess.run(
+            ["ls", "-d", check_path],
+            timeout=HEALTH_TIMEOUT_SEC,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return res.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def dbus_call(
+    bus: Gio.DBusConnection,
+    object_path: str,
+    interface: str,
+    method: str,
+    params: GLib.Variant | None = None,
+    timeout_ms: int = 5000,
+):
+    return bus.call_sync(
+        KDECONNECT_BUS,
+        object_path,
+        interface,
+        method,
+        params,
+        None,
+        Gio.DBusCallFlags.NONE,
+        timeout_ms,
+        None,
+    )
+
+
+def ensure_mounted(device_id: str, storage_subpath: str, reason: str) -> None:
+    dev_path = f"/modules/kdeconnect/devices/{device_id}"
+    sftp_path = f"{dev_path}/sftp"
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    except GLib.Error as exc:
+        log(f"({reason}) session D-Bus unavailable: {exc.message}")
+        return
+
+    try:
+        props_var = dbus_call(
+            bus,
+            dev_path,
+            "org.freedesktop.DBus.Properties",
+            "GetAll",
+            GLib.Variant("(s)", ("org.kde.kdeconnect.device",)),
+        )
+        props = props_var.unpack()[0]
+    except GLib.Error as exc:
+        log(f"({reason}) kdeconnect device unavailable: {exc.message}")
+        return
+
+    is_paired = bool(props.get("isPaired", False))
+    is_reachable = bool(props.get("isReachable", False))
+    if not is_paired or not is_reachable:
+        log(f"({reason}) skipping mount (paired={is_paired}, reachable={is_reachable})")
+        return
+
+    try:
+        mp_var = dbus_call(bus, sftp_path, "org.kde.kdeconnect.device.sftp", "mountPoint")
+        mount_point = str(mp_var.unpack()[0])
+    except GLib.Error as exc:
+        log(f"({reason}) SFTP interface unavailable: {exc.message}")
+        return
+
+    if is_in_mountinfo(mount_point):
+        if is_mount_healthy(mount_point, storage_subpath):
+            log(f"({reason}) SFTP mount healthy at {mount_point}")
+            return
+        log(f"({reason}) stale SFTP mount detected at {mount_point}; remounting")
+        try:
+            dbus_call(bus, sftp_path, "org.kde.kdeconnect.device.sftp", "unmount")
+        except GLib.Error as exc:
+            log(f"({reason}) SFTP unmount warning: {exc.message}")
+        time.sleep(1.0)
+        if is_in_mountinfo(mount_point):
+            subprocess.run(
+                ["fusermount3", "-u", "-z", mount_point],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            time.sleep(0.5)
+    else:
+        try:
+            mounted_var = dbus_call(
+                bus, sftp_path, "org.kde.kdeconnect.device.sftp", "isMounted"
+            )
+            if bool(mounted_var.unpack()[0]):
+                log(f"({reason}) resetting stale KDE Connect SFTP state")
+                dbus_call(bus, sftp_path, "org.kde.kdeconnect.device.sftp", "unmount")
+                time.sleep(0.5)
+        except GLib.Error:
+            pass
+
+    try:
+        res_var = dbus_call(
+            bus,
+            sftp_path,
+            "org.kde.kdeconnect.device.sftp",
+            "mountAndWait",
+            timeout_ms=MOUNT_TIMEOUT_MS,
+        )
+        ok = bool(res_var.unpack()[0])
+    except GLib.Error as exc:
+        log(f"({reason}) mountAndWait failed: {exc.message}")
+        return
+
+    healthy = False
+    if ok:
+        for _ in range(8):
+            if is_mount_healthy(mount_point, storage_subpath):
+                healthy = True
+                break
+            time.sleep(0.25)
+
+    if ok and healthy:
+        log(f"({reason}) mounted cleanly at {mount_point}")
+    else:
+        try:
+            err_var = dbus_call(
+                bus, sftp_path, "org.kde.kdeconnect.device.sftp", "getMountError"
+            )
+            err = str(err_var.unpack()[0])
+        except GLib.Error:
+            err = "unknown error"
+        log(f"({reason}) mount unsuccessful (ok={ok}, err={err!r})")
+
+
+class Watcher:
+    def __init__(self, device_id: str, storage_subpath: str) -> None:
+        self.device_id = device_id
+        self.storage_subpath = storage_subpath
+        self.dev_path = f"/modules/kdeconnect/devices/{device_id}"
+        self.loop = GLib.MainLoop()
+        self.lock = threading.Lock()
+        self.running_worker = False
+        self.rerun_reason: str | None = None
+        self.timer_id: int | None = None
+
+        self.session_bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        self.session_bus.signal_subscribe(
+            KDECONNECT_BUS,
+            "org.kde.kdeconnect.device",
+            "reachableChanged",
+            self.dev_path,
+            None,
+            Gio.DBusSignalFlags.NONE,
+            self._on_reachable_changed,
+        )
+        self.session_bus.signal_subscribe(
+            "org.freedesktop.DBus",
+            "org.freedesktop.DBus",
+            "NameOwnerChanged",
+            "/org/freedesktop/DBus",
+            KDECONNECT_BUS,
+            Gio.DBusSignalFlags.NONE,
+            self._on_name_owner_changed,
+        )
+
+        try:
+            self.system_bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+            self.system_bus.signal_subscribe(
+                "org.freedesktop.login1",
+                "org.freedesktop.login1.Manager",
+                "PrepareForSleep",
+                "/org/freedesktop/login1",
+                None,
+                Gio.DBusSignalFlags.NONE,
+                self._on_prepare_for_sleep,
+            )
+        except GLib.Error as exc:
+            log(f"system login1 signal unavailable (non-fatal): {exc.message}")
+
+    def _on_reachable_changed(self, _conn, _sender, _path, _iface, _signal, params):
+        reachable = bool(params.unpack()[0])
+        if reachable:
+            self.schedule(1000, "reachableChanged(true)")
+
+    def _on_name_owner_changed(self, _conn, _sender, _path, _iface, _signal, params):
+        _name, _old_owner, new_owner = params.unpack()
+        if new_owner:
+            self.schedule(2500, "kdeconnect-daemon-started")
+
+    def _on_prepare_for_sleep(self, _conn, _sender, _path, _iface, _signal, params):
+        going_to_sleep = bool(params.unpack()[0])
+        if not going_to_sleep:
+            self.schedule(3000, "system-resume")
+
+    def schedule(self, delay_ms: int, reason: str) -> None:
+        if self.timer_id is not None:
+            GLib.source_remove(self.timer_id)
+        self.timer_id = GLib.timeout_add(delay_ms, self._trigger, reason)
+
+    def _trigger(self, reason: str) -> bool:
+        self.timer_id = None
+        self._start_worker(reason)
+        return False
+
+    def _start_worker(self, reason: str) -> None:
+        with self.lock:
+            if self.running_worker:
+                self.rerun_reason = reason
+                return
+            self.running_worker = True
+        thread = threading.Thread(target=self._worker, args=(reason,), daemon=True)
+        thread.start()
+
+    def _worker(self, reason: str) -> None:
+        current_reason: str | None = reason
+        while current_reason is not None:
+            ensure_mounted(self.device_id, self.storage_subpath, current_reason)
+            with self.lock:
+                if self.rerun_reason is not None:
+                    current_reason = self.rerun_reason
+                    self.rerun_reason = None
+                else:
+                    self.running_worker = False
+                    current_reason = None
+
+    def run(self) -> int:
+        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, self._quit)
+        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, self._quit)
+        self.schedule(500, "startup")
+        self.loop.run()
+        return 0
+
+    def _quit(self, *_args) -> bool:
+        self.loop.quit()
+        return False
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--device",
+        default=os.environ.get("KDECONNECT_DEVICE_ID", DEFAULT_DEVICE_ID),
+        help="KDE Connect device ID",
+    )
+    parser.add_argument(
+        "--subpath",
+        default=os.environ.get("KDECONNECT_STORAGE_SUBPATH", DEFAULT_STORAGE_SUBPATH),
+        help="Relative storage path inside SFTP mount",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Ensure mounted once and exit",
+    )
+    args = parser.parse_args()
+
+    if args.once:
+        ensure_mounted(args.device, args.subpath, "manual-once")
+        return 0
+    return Watcher(args.device, args.subpath).run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

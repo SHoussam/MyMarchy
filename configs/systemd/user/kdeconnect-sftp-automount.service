@@ -1,0 +1,13 @@
+[Unit]
+Description=KDE Connect SFTP Auto-Mount Helper (SM-G991B)
+After=graphical-session.target app-org.kde.kdeconnect.daemon@autostart.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/kdeconnect-sftp-automount
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
