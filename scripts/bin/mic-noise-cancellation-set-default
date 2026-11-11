@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+
+SOURCE_NAME="rnnoise_mic_source"
+
+for _ in $(seq 1 20); do
+  node_id=$(pw-dump Node 2>/dev/null | jq -r --arg name "$SOURCE_NAME" '
+    .[] | select(.info.props["node.name"]? == $name) | .id
+  ' | head -n 1)
+
+  if [[ -n "$node_id" ]]; then
+    omarchy-audio-input-set-default "$node_id" "$SOURCE_NAME"
+    exit 0
+  fi
+  sleep 0.25
+done
+
+echo "Timed out waiting for PipeWire source $SOURCE_NAME" >&2
+exit 1

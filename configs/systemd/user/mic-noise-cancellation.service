@@ -1,0 +1,16 @@
+[Unit]
+Description=Always-on RNNoise Microphone Noise Cancellation
+After=pipewire.service wireplumber.service
+Requires=pipewire.service
+Wants=wireplumber.service
+PartOf=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pipewire -c mic-noise-cancellation.conf
+ExecStartPost=%h/.local/bin/mic-noise-cancellation-set-default
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

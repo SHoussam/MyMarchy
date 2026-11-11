@@ -1,0 +1,13 @@
+[Unit]
+Description=Microphone Guardian (Auto-unmute on login, boot, and wake from suspend)
+After=wireplumber.service pipewire.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/mic-guardian.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
