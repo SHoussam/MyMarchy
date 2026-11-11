@@ -1,0 +1,36 @@
+[Desktop Entry]
+Type=Application
+Name=Dynamic Island
+Name[es]=Dynamic Island
+Name[tr]=Dynamic Island
+GenericName=Notch Control & Recovery
+GenericName[es]=Control y recuperación de isla
+GenericName[tr]=Ada Kontrolü ve Kurtarma
+Comment=Inspect, revive, and restart the Omarchy Dynamic Island shell plugin
+Comment[es]=Inspecciona, recupera y reinicia el complemento Dynamic Island de Omarchy
+Comment[tr]=Omarchy Dynamic Island eklentisini denetleyin, yenileyin ve yeniden başlatın
+Exec=dynamic-island
+Icon=dynamic-island
+Terminal=false
+Categories=Utility;
+Keywords=dynamic;island;notch;restart;revive;recover;fix;focus;shell;omarchy;
+StartupWMClass=dynamic-island
+Actions=Restart;Revive;Focus;
+
+[Desktop Action Restart]
+Name=Restart Dynamic Island
+Name[es]=Reiniciar Dynamic Island
+Name[tr]=Dynamic Island'ı Yeniden Başlat
+Exec=dynamic-island --restart
+
+[Desktop Action Revive]
+Name=Revive Layer Surface
+Name[es]=Recuperar superficie
+Name[tr]=Katman Yüzeyini Yenile
+Exec=dynamic-island --revive
+
+[Desktop Action Focus]
+Name=Toggle Focus Mode
+Name[es]=Alternar modo enfoque
+Name[tr]=Odak Modunu Aç/Kapat
+Exec=dynamic-island --focus

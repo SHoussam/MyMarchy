@@ -27,3 +27,4 @@ require("default.hypr.toggles")
 
 -- Add any other personal Hyprland configuration below.
 -- o.window("qemu", { workspace = "5" })
+o.window("^dynamic-island$", { float = true, center = true, size = { 480, 484 } })

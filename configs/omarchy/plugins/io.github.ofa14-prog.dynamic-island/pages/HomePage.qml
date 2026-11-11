@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import "../components"
 
 // Home: time and battery at a glance, the usage of every agent that is
@@ -226,6 +227,265 @@ Page {
       }
 
       Rectangle {
+        id: phoneCard
+        readonly property color liveGreen: Theme.light ? "#248A3D" : "#30D158"
+        readonly property color warnAmber: Theme.light ? "#C93400" : "#FF9F0A"
+        readonly property int connCount: island.phones.connectedCount
+        readonly property int pairCount: island.phones.pairedCount
+        readonly property var connList: island.phones.connectedDevices
+        readonly property var primary: island.phones.primaryDevice
+        readonly property int priBat: primary && typeof primary.battery === "number" ? primary.battery : -1
+        readonly property bool priCharging: primary ? !!primary.charging : false
+        readonly property bool priSftp: primary ? !!primary.sftpMounted : false
+        readonly property bool compactMode: width < 156
+
+        anchors.left: usageRow.width > 0 ? usageRow.right : parent.left
+        anchors.leftMargin: usageRow.width > 0 ? 8 : 0
+        anchors.right: controlsCard.left
+        anchors.rightMargin: 8
+        anchors.verticalCenter: parent.verticalCenter
+        height: 66
+        radius: 18
+        visible: width >= 92
+        color: phoneMouse.pressed ? Theme.fillPressed : phoneMouse.containsMouse ? Theme.fillHover : Theme.fill
+        GlassSheen { takeFill: true; lit: phoneMouse.containsMouse; pressed: phoneMouse.pressed }
+        scale: phoneMouse.pressed ? 0.96 : 1
+        Behavior on color { ColorAnimation { duration: Theme.ms(120) } }
+        Behavior on scale {
+          enabled: !Theme.reduceMotion
+          SpringAnimation { spring: Theme.snapSpring; damping: Theme.snapDamping; epsilon: 0.002 }
+        }
+
+        // Single connected phone: device name, connection/charging activity, live battery ring
+        Item {
+          anchors.fill: parent
+          visible: phoneCard.connCount === 1 && phoneCard.primary !== null
+
+          Column {
+            anchors.left: parent.left
+            anchors.leftMargin: 12
+            anchors.right: phoneRingBox.visible ? phoneRingBox.left : parent.right
+            anchors.rightMargin: phoneRingBox.visible ? 8 : 12
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 3
+
+            Row {
+              width: parent.width
+              spacing: 5
+              Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 6; height: 6; radius: 3
+                color: phoneCard.liveGreen
+              }
+              Icon {
+                anchors.verticalCenter: parent.verticalCenter
+                name: "phone"
+                size: 13
+                color: Theme.fg
+              }
+              Label {
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - 29
+                text: phoneCard.primary ? phoneCard.primary.name : ""
+                font.pixelSize: 12
+                strong: true
+              }
+            }
+
+            Label {
+              width: parent.width
+              font.pixelSize: 11
+              color: phoneCard.priCharging ? phoneCard.liveGreen : Theme.secondary
+              text: phoneCard.compactMode && phoneCard.priBat >= 0
+                ? (phoneCard.priBat + "% · " + (phoneCard.priCharging ? I18n.t("Şarj oluyor") : I18n.t("Bağlı")))
+                : phoneCard.priCharging ? I18n.t("Bağlı · Şarj oluyor")
+                : phoneCard.priSftp ? I18n.t("Bağlı · Dosyalar")
+                : I18n.t("Bağlı")
+            }
+          }
+
+          Item {
+            id: phoneRingBox
+            visible: !phoneCard.compactMode && phoneCard.priBat >= 0
+            width: 34; height: 34
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+
+            ProgressRing {
+              anchors.fill: parent
+              thickness: 3.5
+              progress: phoneCard.priBat >= 0 ? Math.max(0, Math.min(1, phoneCard.priBat / 100)) : 0
+              color: phoneCard.priBat >= 0 && phoneCard.priBat <= 15 ? Theme.red
+                : phoneCard.priCharging ? Theme.green
+                : phoneCard.priBat >= 0 && phoneCard.priBat <= 30 ? Theme.orange
+                : Theme.green
+            }
+            Label {
+              anchors.centerIn: parent
+              text: phoneCard.priBat >= 0 ? String(phoneCard.priBat) : ""
+              font.pixelSize: 11
+              strong: true
+              tabular: true
+              horizontalAlignment: Text.AlignHCenter
+            }
+          }
+        }
+
+        // Multiple connected phones: compact dual readout with battery %
+        Column {
+          visible: phoneCard.connCount >= 2
+          anchors.left: parent.left
+          anchors.leftMargin: 12
+          anchors.right: parent.right
+          anchors.rightMargin: 12
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: 5
+
+          Repeater {
+            model: phoneCard.connCount >= 2 ? phoneCard.connList.slice(0, 2) : []
+            delegate: Item {
+              required property var modelData
+              readonly property int bat: typeof modelData.battery === "number" ? modelData.battery : -1
+              width: parent ? parent.width : 0
+              height: 18
+
+              Row {
+                anchors.left: parent.left
+                anchors.right: devRight.left
+                anchors.rightMargin: 6
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 5
+                Rectangle {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: 6; height: 6; radius: 3
+                  color: phoneCard.liveGreen
+                }
+                Icon {
+                  anchors.verticalCenter: parent.verticalCenter
+                  name: "phone"
+                  size: 12
+                  color: Theme.fg
+                }
+                Label {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Math.max(0, parent.width - 26)
+                  text: modelData.name || ""
+                  font.pixelSize: 11
+                  strong: true
+                }
+              }
+
+              Row {
+                id: devRight
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 3
+                Icon {
+                  anchors.verticalCenter: parent.verticalCenter
+                  visible: !!modelData.charging
+                  name: "battery-charge"
+                  size: 11
+                  color: Theme.green
+                }
+                Label {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: bat >= 0 ? (bat + "%") : I18n.t("Çevrimiçi")
+                  font.pixelSize: 11
+                  strong: bat >= 0
+                  tabular: true
+                  color: bat >= 0 && bat <= 15 ? Theme.red
+                    : !!modelData.charging ? phoneCard.liveGreen
+                    : bat >= 0 && bat <= 30 ? Theme.orange
+                    : bat >= 0 ? Theme.green
+                    : Theme.secondary
+                }
+              }
+            }
+          }
+        }
+
+        // Offline / disconnected state: shows explicit phone disconnection / offline status
+        Column {
+          visible: phoneCard.connCount === 0
+          anchors.left: parent.left
+          anchors.leftMargin: 12
+          anchors.right: parent.right
+          anchors.rightMargin: 12
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: 3
+
+          Row {
+            width: parent.width
+            spacing: 5
+            Rectangle {
+              anchors.verticalCenter: parent.verticalCenter
+              width: 6; height: 6; radius: 3
+              color: phoneCard.pairCount > 0 ? phoneCard.warnAmber : Theme.tertiary
+            }
+            Icon {
+              anchors.verticalCenter: parent.verticalCenter
+              name: "phone"
+              size: 12
+              color: Theme.secondary
+            }
+            Label {
+              anchors.verticalCenter: parent.verticalCenter
+              width: parent.width - 28
+              text: I18n.t("Telefon bağlı değil")
+              font.pixelSize: 12
+              strong: true
+              color: Theme.secondary
+            }
+          }
+
+          Label {
+            width: parent.width
+            font.pixelSize: 11
+            color: Theme.tertiary
+            text: island.phones.lastEventMessage && (island.nowMs - island.phones.lastEventAt) < 120000
+              ? I18n.t("%1 bağlantısı kesildi").arg(island.phones.lastEventMessage)
+              : phoneCard.pairCount > 0
+                ? I18n.t("%1 eşli · çevrimdışı").arg(phoneCard.pairCount)
+                : I18n.t("KDE Connect'i aç")
+          }
+        }
+
+        MouseArea {
+          id: phoneMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          acceptedButtons: Qt.LeftButton | Qt.RightButton
+          onClicked: mouseEvent => {
+            if (mouseEvent.button === Qt.RightButton) {
+              var list = island.phones.connectedDevices
+              var sftpDev = null
+              for (var i = 0; i < list.length; i++) {
+                if (list[i] && list[i].sftpMounted) { sftpDev = list[i]; break }
+              }
+              if (sftpDev) {
+                var runtimeDir = Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000"
+                Quickshell.execDetached(["xdg-open", runtimeDir + "/" + sftpDev.id + "/storage/emulated/0"])
+                island.collapse()
+                island.peek("folder", sftpDev.name, I18n.t("Dosyalar"), Theme.blue, 1600)
+                return
+              }
+            }
+            Quickshell.execDetached(["kdeconnect-app"])
+            island.collapse()
+            island.peek("phone", I18n.t("Açılıyor"), "KDE Connect", Theme.green, 1600)
+          }
+        }
+
+        Accessible.role: Accessible.Button
+        Accessible.name: phoneCard.connCount > 0 && phoneCard.primary
+          ? (phoneCard.primary.name + ", " + I18n.t("Bağlı") + (phoneCard.priBat >= 0 ? ", " + phoneCard.priBat + "%" : ""))
+          : I18n.t("Telefon bağlı değil")
+      }
+
+      Rectangle {
+        id: controlsCard
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
         width: controlsRow.implicitWidth + 22

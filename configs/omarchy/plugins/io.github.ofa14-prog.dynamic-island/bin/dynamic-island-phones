@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Event-driven KDE Connect D-Bus bridge for the Omarchy Dynamic Island.
+
+Emits line-delimited JSON snapshots on device reachability, battery, charging,
+SFTP mount status, and immediate call events over session D-Bus (0% idle CPU).
+"""
+
+import argparse
+import json
+import signal
+import sys
+
+from gi.repository import Gio, GLib, GLibUnix
+
+KDECONNECT_BUS = "org.kde.kdeconnect"
+DAEMON_PATH = "/modules/kdeconnect"
+
+
+def emit(obj: dict) -> None:
+    print(json.dumps(obj, ensure_ascii=False, separators=(",", ":")), flush=True)
+
+
+def dbus_call(
+    bus: Gio.DBusConnection,
+    object_path: str,
+    interface: str,
+    method: str,
+    params: GLib.Variant | None = None,
+    timeout_ms: int = 2000,
+):
+    return bus.call_sync(
+        KDECONNECT_BUS,
+        object_path,
+        interface,
+        method,
+        params,
+        None,
+        Gio.DBusCallFlags.NONE,
+        timeout_ms,
+        None,
+    )
+
+
+def read_snapshot(bus: Gio.DBusConnection) -> dict:
+    try:
+        devs_var = dbus_call(
+            bus,
+            DAEMON_PATH,
+            "org.kde.kdeconnect.daemon",
+            "devices",
+            GLib.Variant("(bb)", (False, True)),
+        )
+        device_ids = list(devs_var.unpack()[0])
+    except GLib.Error:
+        return {
+            "type": "state",
+            "daemonAvailable": False,
+            "devices": [],
+            "connectedCount": 0,
+            "pairedCount": 0,
+        }
+
+    devices = []
+    for dev_id in device_ids:
+        dev_path = f"{DAEMON_PATH}/devices/{dev_id}"
+        try:
+            props_var = dbus_call(
+                bus,
+                dev_path,
+                "org.freedesktop.DBus.Properties",
+                "GetAll",
+                GLib.Variant("(s)", ("org.kde.kdeconnect.device",)),
+            )
+            props = props_var.unpack()[0]
+        except GLib.Error:
+            continue
+
+        name = str(props.get("name") or dev_id)
+        dev_type = str(props.get("type") or "phone")
+        paired = bool(props.get("isPaired", False))
+        reachable = bool(props.get("isReachable", False))
+        if not paired:
+            continue
+
+        battery = -1
+        charging = False
+        if reachable:
+            try:
+                bat_var = dbus_call(
+                    bus,
+                    f"{dev_path}/battery",
+                    "org.freedesktop.DBus.Properties",
+                    "GetAll",
+                    GLib.Variant("(s)", ("org.kde.kdeconnect.device.battery",)),
+                )
+                bat = bat_var.unpack()[0]
+                has_bat = bool(bat.get("hasBattery", False))
+                charge = int(bat.get("charge", -1))
+                if has_bat and 0 <= charge <= 100:
+                    battery = charge
+                charging = bool(bat.get("isCharging", False))
+            except GLib.Error:
+                pass
+
+        sftp_mounted = False
+        if reachable:
+            try:
+                sftp_var = dbus_call(
+                    bus,
+                    f"{dev_path}/sftp",
+                    "org.kde.kdeconnect.device.sftp",
+                    "isMounted",
+                )
+                sftp_mounted = bool(sftp_var.unpack()[0])
+            except GLib.Error:
+                pass
+
+        devices.append(
+            {
+                "id": dev_id,
+                "name": name,
+                "deviceType": dev_type,
+                "paired": True,
+                "reachable": reachable,
+                "battery": battery,
+                "charging": charging,
+                "sftpMounted": sftp_mounted,
+            }
+        )
+
+    devices.sort(key=lambda d: (0 if d["reachable"] else 1, 0 if d["battery"] >= 0 else 1, d["name"].lower()))
+    connected_count = sum(1 for d in devices if d["reachable"])
+    return {
+        "type": "state",
+        "daemonAvailable": True,
+        "devices": devices,
+        "connectedCount": connected_count,
+        "pairedCount": len(devices),
+    }
+
+
+class PhoneWatcher:
+    def __init__(self) -> None:
+        self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        self.loop = GLib.MainLoop()
+        self.last_payload = ""
+        self.timer_id: int | None = None
+        self.followup_id: int | None = None
+        self.names_by_id: dict[str, str] = {}
+
+        # Daemon-level signals
+        for sig in ("deviceAdded", "deviceRemoved", "deviceVisibilityChanged"):
+            self.bus.signal_subscribe(
+                KDECONNECT_BUS,
+                "org.kde.kdeconnect.daemon",
+                sig,
+                DAEMON_PATH,
+                None,
+                Gio.DBusSignalFlags.NONE,
+                self._on_changed,
+            )
+
+        # Per-device signals across all paired devices
+        for iface, sig in (
+            ("org.kde.kdeconnect.device", "reachableChanged"),
+            ("org.kde.kdeconnect.device", "pairStateChanged"),
+            ("org.kde.kdeconnect.device", "nameChanged"),
+            ("org.kde.kdeconnect.device", "pluginsChanged"),
+            ("org.kde.kdeconnect.device.battery", "refreshed"),
+            ("org.kde.kdeconnect.device.sftp", "mounted"),
+            ("org.kde.kdeconnect.device.sftp", "unmounted"),
+        ):
+            self.bus.signal_subscribe(
+                KDECONNECT_BUS,
+                iface,
+                sig,
+                None,
+                None,
+                Gio.DBusSignalFlags.NONE,
+                lambda *args, s=sig: self._on_device_signal(s, *args),
+            )
+
+        self.bus.signal_subscribe(
+            KDECONNECT_BUS,
+            "org.kde.kdeconnect.device.telephony",
+            "callReceived",
+            None,
+            None,
+            Gio.DBusSignalFlags.NONE,
+            self._on_call_received,
+        )
+
+        self.bus.signal_subscribe(
+            "org.freedesktop.DBus",
+            "org.freedesktop.DBus",
+            "NameOwnerChanged",
+            "/org/freedesktop/DBus",
+            KDECONNECT_BUS,
+            Gio.DBusSignalFlags.NONE,
+            self._on_name_owner,
+        )
+
+    def _on_changed(self, *_args) -> None:
+        self.schedule(140)
+
+    def _on_name_owner(self, _conn, _sender, _path, _iface, _signal, params) -> None:
+        _name, _old_owner, new_owner = params.unpack()
+        self.schedule(900 if new_owner else 100)
+
+    def _on_device_signal(self, sig_name: str, _conn, _sender, _path, _iface, _signal, params) -> None:
+        if sig_name == "reachableChanged":
+            try:
+                if bool(params.unpack()[0]):
+                    self.schedule(450)
+                    self._schedule_followup(1800)
+                    return
+            except Exception:
+                pass
+        self.schedule(140)
+
+    def _on_call_received(self, _conn, _sender, path, _iface, _signal, params) -> None:
+        try:
+            call_event, number, contact_name = params.unpack()
+        except Exception:
+            return
+        parts = str(path or "").split("/")
+        dev_id = parts[-2] if len(parts) >= 2 else ""
+        dev_name = self.names_by_id.get(dev_id, "Phone")
+        emit(
+            {
+                "type": "call",
+                "deviceId": dev_id,
+                "deviceName": dev_name,
+                "event": str(call_event or ""),
+                "number": str(number or ""),
+                "caller": str(contact_name or ""),
+            }
+        )
+
+    def schedule(self, delay_ms: int) -> None:
+        if self.timer_id is not None:
+            GLib.source_remove(self.timer_id)
+        self.timer_id = GLib.timeout_add(delay_ms, self._flush)
+
+    def _schedule_followup(self, delay_ms: int) -> None:
+        if self.followup_id is not None:
+            GLib.source_remove(self.followup_id)
+        self.followup_id = GLib.timeout_add(delay_ms, self._flush_followup)
+
+    def _flush_followup(self) -> bool:
+        self.followup_id = None
+        self.emit_snapshot()
+        return False
+
+    def _flush(self) -> bool:
+        self.timer_id = None
+        self.emit_snapshot()
+        return False
+
+    def emit_snapshot(self) -> None:
+        snap = read_snapshot(self.bus)
+        for d in snap.get("devices", []):
+            self.names_by_id[d["id"]] = d["name"]
+        payload = json.dumps(snap, ensure_ascii=False, separators=(",", ":"))
+        if payload != self.last_payload:
+            self.last_payload = payload
+            print(payload, flush=True)
+
+    def _quit(self, *_args) -> bool:
+        self.loop.quit()
+        return False
+
+    def run(self) -> int:
+        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, self._quit)
+        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, self._quit)
+        self.emit_snapshot()
+        self.loop.run()
+        return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--once", action="store_true", help="Print current snapshot and exit")
+    args = parser.parse_args()
+    if args.once:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        emit(read_snapshot(bus))
+        return 0
+    return PhoneWatcher().run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

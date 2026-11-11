@@ -39,5 +39,12 @@
     "description": "setup - Open ~/my-setup in editor",
     "aliases": ["setup", "my-setup"],
     "action": "omarchy-launch-editor ~/my-setup"
+  },
+  "personal.island-restart": {
+    "icon": "󰑓",
+    "label": "Restart Dynamic Island (restart-island)",
+    "description": "Restart the Omarchy shell & Dynamic Island notch",
+    "aliases": ["restart-island", "fix-island", "revive-island"],
+    "action": "$HOME/.local/bin/dynamic-island --restart"
   }
 }

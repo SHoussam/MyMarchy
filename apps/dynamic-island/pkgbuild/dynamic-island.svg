@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="cardBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2c2a2e"/>
+      <stop offset="100%" stop-color="#111013"/>
+    </linearGradient>
+    <linearGradient id="pillGlow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#87a9b0"/>
+      <stop offset="55%" stop-color="#b59790"/>
+      <stop offset="100%" stop-color="#a5a0b6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App squircle base -->
+  <rect x="6" y="6" width="116" height="116" rx="28" fill="url(#cardBg)"/>
+  <rect x="6.75" y="6.75" width="114.5" height="114.5" rx="27.25" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="1.5"/>
+
+  <!-- Subtle top bar chrome hint -->
+  <rect x="24" y="25" width="80" height="4" rx="2" fill="#ffffff" fill-opacity="0.10"/>
+
+  <!-- Ambient halo behind main island pill -->
+  <rect x="16" y="42" width="72" height="44" rx="22" fill="url(#pillGlow)" fill-opacity="0.24"/>
+
+  <!-- Main Dynamic Island pill -->
+  <rect x="18" y="45" width="68" height="38" rx="19" fill="#070709" stroke="url(#pillGlow)" stroke-width="2.5"/>
+
+  <!-- Live status orb -->
+  <circle cx="34.5" cy="64" r="6.5" fill="#87a9b0"/>
+  <circle cx="34.5" cy="64" r="2.6" fill="#FAFCFB"/>
+
+  <!-- Equalizer / activity bars -->
+  <rect x="49" y="59" width="4.5" height="10" rx="2.25" fill="#b59790"/>
+  <rect x="57" y="53" width="4.5" height="22" rx="2.25" fill="#FAFCFB"/>
+  <rect x="65" y="57" width="4.5" height="14" rx="2.25" fill="#b59790"/>
+  <rect x="73" y="60.5" width="4.5" height="7" rx="2.25" fill="#a5a0b6"/>
+
+  <!-- Side bubble badge (matches Dynamic Island split/bubble form) -->
+  <circle cx="100" cy="64" r="10.5" fill="#070709" stroke="#b59790" stroke-width="2.5"/>
+  <circle cx="100" cy="64" r="4.2" fill="#FAFCFB"/>
+</svg>

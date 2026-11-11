@@ -1,13 +1,14 @@
 {
   "bar": {
     "background": "none",
+    "id": "lobo.islands",
     "layout": {
       "center": [],
       "centerBegin": [],
       "centerEnd": [],
       "left": [
         {
-          "id": "omarchy.menu"
+          "id": "hous.menu"
         },
         {
           "id": "omarchy.workspaces"
@@ -19,6 +20,9 @@
       "right": [
         {
           "id": "omarchy.indicators"
+        },
+        {
+          "id": "omarchy.tray"
         },
         {
           "id": "omarchy.elsewhen",
@@ -52,9 +56,6 @@
           "id": "omarchy.system-update"
         },
         {
-          "id": "omarchy.tray"
-        },
-        {
           "id": "omarchy.keyboard-layout"
         },
         {
@@ -83,8 +84,14 @@
       ]
     },
     "position": "top",
-    "id": "lobo.islands"
+    "transparent": false
   },
+  "cloneSourceRestores": [
+    "hous.menu"
+  ],
+  "disabledPlugins": [
+    "omarchy.menu"
+  ],
   "dock": {
     "pinned": [
       "org.gnome.Nautilus",
@@ -93,7 +100,9 @@
       "omacalc",
       "omawrite",
       "X",
-      "YouTube"
+      "YouTube",
+      "dynamic-island",
+      "org.kde.kdeconnect.app"
     ],
     "position": "bottom"
   },

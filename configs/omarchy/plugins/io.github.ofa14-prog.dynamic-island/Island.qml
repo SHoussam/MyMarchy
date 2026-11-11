@@ -88,7 +88,7 @@ Item {
     clockFormat: "ddd HH:mm",
     language: "en",         // en | es | ru | tr | auto (follow the system)
     locale: "",
-    priority: ["music", "timer", "recording"],
+    priority: ["agent", "recording", "timer", "music"],
     compactHeight: "auto",
     topOffset: 0,
     expandedWidth: 550,
@@ -189,7 +189,7 @@ Item {
   Process {
     id: agentProbe
     running: true
-    command: ["sh", "-c", "for a; do id=${a%%:*}; bin=${a#*:}; command -v \"$bin\" >/dev/null 2>&1 && echo \"$id\"; done", "sh"]
+    command: ["sh", "-c", "for a; do id=${a%%:*}; bin=${a#*:}; if [ \"$id\" = lmstudio ]; then { command -v \"$bin\" || command -v lms || [ -x \"$HOME/.lmstudio/bin/lms\" ]; } >/dev/null 2>&1 && echo \"$id\"; else command -v \"$bin\" >/dev/null 2>&1 && echo \"$id\"; fi; done", "sh"]
       .concat(Agents.connectable.map(id => id + ":" + Agents.get(id).bin))
     stdout: StdioCollector { onStreamFinished: island.installedAgents = text.split("\n").filter(l => l !== "") }
   }
@@ -417,6 +417,7 @@ Item {
     omarchyAgent: island.omarchyAgent
     usageAgent: island.pageAgent
     usageAgents: island.usageAgents
+    agentPageShown: island.mode === "expanded" && island.page === "agent"
     quietAfterMs: Math.max(20, Number(island.cfg("agentQuietSeconds")) || 180) * 1000
     onPermissionArrived: request => {
       if (island.cfg("autoExpandPermission")) {
@@ -499,6 +500,33 @@ Item {
     id: hardwareSvc
     active: island.mode === "expanded" && island.page === "home"
   }
+  property double phoneGraceUntil: 0
+  PhoneService {
+    id: phonesSvc
+    onDeviceConnected: device => {
+      if (Date.now() < island.phoneGraceUntil) return
+      var sub = device.battery >= 0
+        ? I18n.t("Pil %1%").arg(device.battery) + (device.charging ? " · " + I18n.t("Şarj oluyor") : "")
+        : I18n.t("Yerel Wi-Fi")
+      island.peek("phone", I18n.t("%1 bağlandı").arg(device.name), sub, Qt.color(Theme.light ? "#248A3D" : "#30D158"), 2800, "home")
+    }
+    onDeviceDisconnected: (device, remaining) => {
+      if (Date.now() < island.phoneGraceUntil) return
+      var sub = remaining > 0
+        ? I18n.t("%1 telefon hâlâ bağlı").arg(remaining)
+        : I18n.t("Bağlı telefon yok")
+      island.peek("phone", I18n.t("%1 bağlantısı kesildi").arg(device.name), sub, Qt.color(Theme.light ? "#C93400" : "#FF9F0A"), 2800, "home")
+    }
+    onIncomingCall: call => {
+      if (Date.now() < island.phoneGraceUntil) return
+      var who = call.caller || call.number || I18n.t("Bilinmeyen")
+      if (call.event === "ringing") {
+        island.peek("phone", I18n.t("%1 arıyor").arg(who), call.deviceName || "", Qt.color(Theme.light ? "#248A3D" : "#30D158"), 4500, "home")
+      } else if (call.event === "missedCall") {
+        island.peek("phone", I18n.t("Cevapsız arama"), who, Qt.color(Theme.light ? "#C93400" : "#FF9F0A"), 3600, "home")
+      }
+    }
+  }
   RecordingService { id: recordingSvc }
   AudioLevel {
     id: audioSvc
@@ -514,6 +542,7 @@ Item {
   readonly property alias apps: appsSvc
   readonly property alias recording: recordingSvc
   readonly property alias hardware: hardwareSvc
+  readonly property alias phones: phonesSvc
 
   // Charging peek, the same moment iOS shows the green battery.
   readonly property var battery: UPower.displayDevice
@@ -535,7 +564,18 @@ Item {
       island.lastOnBattery = UPower.onBattery
     }
   }
-  Component.onCompleted: lastOnBattery = UPower.onBattery
+  Component.onCompleted: {
+    phoneGraceUntil = Date.now() + 3500
+    lastOnBattery = UPower.onBattery
+    var initial = resolveTargetScreen()
+    if (initial) {
+      targetScreen = initial
+      lastScreenName = String(initial.name)
+      setSurfaceReady(true)
+    } else {
+      syncTargetScreen(false)
+    }
+  }
 
   // ================================================================ clock
 
@@ -563,14 +603,25 @@ Item {
   // player leaves the compact notch clean and empty until hovered.
   readonly property bool musicLive: music.available && music.playing
   readonly property var live: {
-    var order = (cfg("priority") || ["music", "timer", "recording"])
+    // "claude" is the pre-1.1 name of the agent activity.
+    var order = (cfg("priority") || ["agent", "recording", "timer", "music"]).map(k => k === "claude" ? "agent" : k)
     var out = []
     for (var i = 0; i < order.length; i++) {
       var k = order[i]
-      if (k === "music" && musicLive) out.push(k)
+      if (k === "agent" && (agents.live || recentlyFinished)) out.push(k)
+      else if (k === "music" && musicLive) out.push(k)
       else if (k === "timer" && timer.active) out.push(k)
       else if (k === "recording" && recording.active) out.push(k)
       else if (k === "shelf" && shelf.count > 0) out.push(k)
+    }
+    // Activities missing from a user's custom priority still show, last.
+    var all = ["agent", "recording", "timer", "music", "shelf"]
+    for (var j = 0; j < all.length; j++) {
+      var a = all[j]
+      if (out.indexOf(a) !== -1 || order.indexOf(a) !== -1) continue
+      if ((a === "agent" && (agents.live || recentlyFinished)) || (a === "timer" && timer.active)
+          || (a === "music" && musicLive) || (a === "recording" && recording.active)
+          || (a === "shelf" && shelf.count > 0)) out.push(a)
     }
     return out
   }
@@ -677,15 +728,15 @@ Item {
     if (name === "claude") name = "agent"
     if (name === "permission" && agents.pending.length === 0) name = "agent"
     name = name || defaultPage()
-    if (mode === "expanded") { setPage(name); openedBy = by || openedBy; focusScope.forceActiveFocus(); return }
+    if (mode === "expanded") { setPage(name); openedBy = by || openedBy; focusInput(); return }
     pageSlide = 0
     page = name
     openedBy = by || "pointer"
-    pointerVisited = hover.hovered
+    pointerVisited = island.hovered
     springMode = "open"
     mode = "expanded"
     collapseTimer.stop()
-    focusScope.forceActiveFocus()
+    focusInput()
   }
 
   // ---- refresh
@@ -748,7 +799,7 @@ Item {
   }
   Timer {
     id: peekTimer
-    onTriggered: if (island.mode === "peek" && !hover.hovered) island.collapse(); else if (island.mode === "peek") restart()
+    onTriggered: if (island.mode === "peek" && !island.hovered) island.collapse(); else if (island.mode === "peek") restart()
   }
 
   // ---- motion helpers
@@ -832,7 +883,7 @@ Item {
     running: true
     triggeredOnStart: true
     onTriggered: {
-      barProbe.monitor = window.screen ? window.screen.name : ""
+      barProbe.monitor = island.targetScreen ? String(island.targetScreen.name) : ""
       if (!barProbe.running) barProbe.running = true
     }
   }
@@ -865,14 +916,21 @@ Item {
     }
   }
   Process { id: blurProc }
-  Timer { running: true; interval: 50; onTriggered: glassSetup.run() }
-  // Hyprland reloads its config (and drops runtime rules) on every save.
+  Timer { id: glassRefresh; running: true; interval: 60; onTriggered: { glassSetup.run(); hyprGlassSetup.run() } }
+  // Hyprland reloads its config (and drops runtime rules) on every save,
+  // and monitor hotplug/wake events can precede or reorder Quickshell screens.
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (event.name !== "configreloaded") return
-      if (island.glassOn) glassSetup.run()
-      hyprGlassSetup.run()
+      if (event.name === "configreloaded") {
+        if (island.glassOn) glassSetup.run()
+        hyprGlassSetup.run()
+        return
+      }
+      if (event.name === "monitoradded" || event.name === "monitoraddedv2"
+          || event.name === "monitorremoved" || event.name === "monitorremovedv2") {
+        island.syncTargetScreen(false)
+      }
     }
   }
 
@@ -930,7 +988,7 @@ Item {
   Behavior on pullY { enabled: !Theme.reduceMotion; SpringAnimation { spring: 16; damping: 0.75; epsilon: 0.1 } }
   Behavior on pullAmp {
     enabled: !Theme.reduceMotion
-    NumberAnimation { duration: island.pullAmp > 0.1 && !hover.hovered ? 260 : 90; easing.type: Easing.OutCubic }
+    NumberAnimation { duration: island.pullAmp > 0.1 && !island.hovered ? 260 : 90; easing.type: Easing.OutCubic }
   }
   property real glassEnergy: 0
   function flash() {
@@ -1008,26 +1066,27 @@ Item {
   readonly property int surfaceW: expandedW + 180
   readonly property int surfaceH: expandedNow || tallHold.running || !introDone ? 720
     : Math.max(topY, 0) + Math.max(compactH, 64) + 72
-  readonly property bool hovered: hover.hovered
+  readonly property bool hovered: surfaceLoader.item ? surfaceLoader.item.hovered : false
   // Split in two, each half reacts on its own: no whole-island grow or lean;
   // the half under the pointer lights up and hovering opens its agent.
-  readonly property int hoveredHalf: halvesOn && hovered ? (hover.point.position.x < stage.width / 2 ? 0 : 1) : -1
+  readonly property int hoveredHalf: halvesOn && hovered && surfaceLoader.item ? (surfaceLoader.item.hoverX < surfaceLoader.item.stageWidth / 2 ? 0 : 1) : -1
   readonly property string hoveredAgent: hoveredHalf >= 0 ? (splitOrder[hoveredHalf] || "") : ""
   readonly property int hoverGrowW: mode === "compact" && hovered && !halvesOn ? 12 : 0
   readonly property int hoverGrowH: mode === "compact" && hovered && !halvesOn ? 2 : 0
 
-  readonly property int idleW: cfg("idleClock") ? Math.max(96, Math.ceil(clockMetrics.advanceWidth) + 24) : 116
+  readonly property int phoneDotPad: phones.connected && !splitIsland ? 12 : 0
+  readonly property int idleW: (cfg("idleClock") ? Math.max(124, Math.ceil(clockMetrics.advanceWidth) + 48) : 56) + phoneDotPad
   readonly property int liveW: {
-    if (splitIsland) return 352
-    if (primary === "agent") return 280
-    if (primary === "timer") return 220
-    if (primary === "music") return 256
-    if (primary === "recording") return 200
+    if (splitIsland) return 344
+    if (primary === "agent") return (cfg("idleClock") ? 248 : 206) + phoneDotPad
+    if (primary === "timer") return 220 + phoneDotPad
+    if (primary === "music") return 256 + phoneDotPad
+    if (primary === "recording") return 200 + phoneDotPad
     return idleW
   }
 
   readonly property int expandedChromeH: page === "permission" ? 0 : 44
-  readonly property int pageH: pageStack.currentHeight
+  readonly property int pageH: surfaceLoader.item ? surfaceLoader.item.pageH : 0
   readonly property int targetW: !introDone ? compactH
     : mode === "expanded" ? expandedW
     : mode === "peek" ? Math.min(expandedW, Math.max(320, Math.ceil(peekMetrics.advanceWidth) + 130))
@@ -1060,7 +1119,7 @@ Item {
     id: hoverTimer
     interval: island.cfg("hoverDelay")
     onTriggered: {
-      if (!hover.hovered || island.mode === "expanded") return
+      if (!island.hovered || island.mode === "expanded") return
       // Over one half of a split island: that half's agent.
       if (island.hoveredAgent) island.showAgent(island.hoveredAgent)
       else island.openPage(island.defaultPage(), "pointer")
@@ -1070,7 +1129,7 @@ Item {
   Timer {
     id: collapseTimer
     interval: island.cfg("collapseDelay")
-    onTriggered: if (!hover.hovered && !island.locked && island.mode === "expanded") island.collapse()
+    onTriggered: if (!island.hovered && !island.locked && island.mode === "expanded") island.collapse()
   }
 
   onHoveredChanged: {
@@ -1091,12 +1150,157 @@ Item {
   readonly property bool fullscreenHidden: cfg("hideOnFullscreen") && !alertActive && mode === "compact"
     && focusedMonitor && focusedMonitor.activeWorkspace && focusedMonitor.activeWorkspace.hasFullscreen === true
 
+  // ================================================================ surfaces & wake recovery
+
+  // Guard against Qt Wayland's zero-output placeholder screens ("", "FALLBACK")
+  // and tear down / recreate both PanelWindows across disconnect/suspend/wake
+  // transitions or compositor layer-surface closes so neither surface ends up
+  // bound to a closed zwlr_layer_surface_v1 or dangling QScreen.
+  property var targetScreen: null
+  property string lastScreenName: ""
+  property bool surfaceReady: false
+  property int surfaceRecoverCount: 0
+
+  function isRealScreen(s) {
+    if (!s) return false
+    var n = String(s.name || "").trim()
+    if (n === "" || n === "FALLBACK") return false
+    if (s.width <= 0 || s.height <= 0) return false
+    return true
+  }
+
+  function resolveTargetScreen() {
+    var screens = Quickshell.screens
+    if (!screens || screens.length === 0) return null
+    var real = []
+    for (var i = 0; i < screens.length; i++) {
+      if (isRealScreen(screens[i])) real.push(screens[i])
+    }
+    if (real.length === 0) return null
+    var want = String(cfg("screen") || (focusedMonitor ? focusedMonitor.name : "") || "")
+    if (want) {
+      for (var j = 0; j < real.length; j++) {
+        if (String(real[j].name) === want) return real[j]
+      }
+    }
+    return real[0]
+  }
+
+  function setSurfaceReady(ready) {
+    if (!ready && surfaceLoader.item) surfaceLoader.item.tearingDown = true
+    if (surfaceReady !== ready) surfaceReady = ready
+  }
+
+  function onSurfaceWindowConnected() {
+    surfaceRecoverCount = 0
+    glassRefresh.restart()
+    if (mode === "expanded") Qt.callLater(focusInput)
+  }
+
+  function focusInput() {
+    if (surfaceLoader.item) surfaceLoader.item.focusInput()
+  }
+
+  function syncTargetScreen(forceRemap) {
+    var next = resolveTargetScreen()
+    if (!next) {
+      surfaceSettle.stop()
+      setSurfaceReady(false)
+      targetScreen = null
+      return
+    }
+    var same = (targetScreen === next)
+    if (!same) {
+      setSurfaceReady(false)
+      if (lastScreenName && String(next.name) !== lastScreenName) {
+        barStable = 0
+        barSettled = false
+      }
+      targetScreen = next
+      lastScreenName = String(next.name)
+      surfaceSettle.interval = 180
+      surfaceSettle.restart()
+    } else if (forceRemap) {
+      setSurfaceReady(false)
+      surfaceSettle.interval = 180
+      surfaceSettle.restart()
+    } else if (!surfaceReady && !surfaceSettle.running) {
+      surfaceSettle.interval = 180
+      surfaceSettle.restart()
+    }
+  }
+
+  function recoverSurface() {
+    if (surfaceSettle.running) return
+    setSurfaceReady(false)
+    surfaceRecoverCount = Math.min(surfaceRecoverCount + 1, 6)
+    surfaceSettle.interval = surfaceRecoverCount > 3 ? 1000 : 200
+    surfaceSettle.restart()
+  }
+
+  function forceRebuildSurface() {
+    surfaceRecoverCount = 0
+    syncTargetScreen(true)
+  }
+
+  Timer {
+    id: surfaceSettle
+    onTriggered: {
+      var next = island.resolveTargetScreen()
+      if (!next) {
+        island.setSurfaceReady(false)
+        island.targetScreen = null
+        return
+      }
+      if (next !== island.targetScreen) {
+        island.targetScreen = next
+        island.lastScreenName = String(next.name)
+        surfaceSettle.interval = 180
+        surfaceSettle.restart()
+        return
+      }
+      island.setSurfaceReady(true)
+      if (!barProbe.running) {
+        barProbe.monitor = String(next.name)
+        barProbe.running = true
+      }
+    }
+  }
+
+  Timer {
+    id: surfaceMoveRemap
+    interval: 220
+    onTriggered: {
+      if (!island.isRealScreen(island.targetScreen)) return
+      island.syncTargetScreen(true)
+    }
+  }
+
+  Connections {
+    target: Quickshell
+    function onScreensChanged() { island.syncTargetScreen(false) }
+  }
+
+  Connections {
+    target: island.targetScreen
+    ignoreUnknownSignals: true
+    function onXChanged() { surfaceMoveRemap.restart() }
+    function onYChanged() { surfaceMoveRemap.restart() }
+    function onNameChanged() { island.syncTargetScreen(false) }
+    function onWidthChanged() { if (!island.isRealScreen(island.targetScreen)) island.syncTargetScreen(false) }
+    function onHeightChanged() { if (!island.isRealScreen(island.targetScreen)) island.syncTargetScreen(false) }
+  }
+
+  onFocusedMonitorChanged: syncTargetScreen(false)
+  onUserConfigChanged: syncTargetScreen(false)
+
   // ================================================================ IPC
 
   IpcHandler {
     target: "dynamicisland"
     function toggle(): string { island.toggle(); return "ok" }
     function reset(): string { island.resetIsland(); return "ok" }
+    function recoverSurface(): string { island.forceRebuildSurface(); return "ok" }
     function restartShell(): string { island.restartShell(); return "ok" }
     function open(page: string): string { island.openPage(page || island.defaultPage(), "key"); return "ok" }
     function close(): string { island.collapse(); return "ok" }
@@ -1119,695 +1323,44 @@ Item {
       return out.join("\n")
     }
     function sessions(): string {
-      return JSON.stringify(island.agents.sessionList.map(s => ({ id: s.id.substring(0, 8), agent: s.agent, state: island.agents.displayState(s), tool: s.tool, project: s.project, lastTs: s.lastTs, transcript: s.transcript, turnStartedAt: s.turnStartedAt })))
+      return JSON.stringify(island.agents.sessionList.map(s => ({
+        id: s.agent === "lmstudio" ? s.id : s.id.substring(0, 12),
+        agent: s.agent,
+        state: island.agents.displayState(s),
+        tool: s.tool,
+        model: s.model || "",
+        provider: s.provider || "",
+        project: s.project,
+        lastTs: s.lastTs,
+        transcript: s.transcript,
+        turnStartedAt: s.turnStartedAt
+      })))
     }
     function status(): string {
       return JSON.stringify({ agent: island.agentId, mode: island.mode, page: island.page, primary: island.primary, secondary: island.secondary, tertiary: island.tertiary,
         pending: agents.pending.length, sessions: agents.sessionList.length, listening: agents.listening,
         running: island.runningAgents, working: island.workingAgents, split: island.splitIsland, pageAgent: island.pageAgent,
         usage: island.agents.usage,
+        phones: { connected: island.phones.connectedCount, paired: island.phones.pairedCount, devices: island.phones.devices },
+        screen: island.targetScreen ? String(island.targetScreen.name) : "",
+        surfaceReady: island.surfaceReady,
         ambient: island.ambientOn, audio: island.audio.active ? Math.round(island.audio.level * 100) / 100 : -1 })
     }
   }
 
-  // ================================================================ glow
+  // ================================================================ surfaces
 
-  // HyprGlass turns every visible pixel of the island's layer into glass,
-  // so the music's ambient glow lives on a layer of its own while it is on:
-  // same size and place, one layer level down (Top, under the island's
-  // Overlay) so it always stays beneath it, no input, and not glassed.
-  // Without HyprGlass the glow stays in the island.
-  PanelWindow {
-    id: glowWindow
-    screen: window.screen
-    anchors { top: true }
-    implicitWidth: window.implicitWidth
-    implicitHeight: window.implicitHeight
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    WlrLayershell.namespace: "dynamic-island-glow"
-    WlrLayershell.layer: WlrLayer.Top
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-    mask: Region {}
-
-    // The island's glow, following the stage (place, scale, fade).
-    Item {
-      visible: island.hyprGlassOn && ambient.visible
-      x: stage.x
-      y: stage.y
-      width: stage.width
-      height: stage.height
-      scale: stage.scale
-      transformOrigin: Item.Top
-      opacity: stage.opacity * ambient.opacity
-
-      RectangularShadow {
-        x: 0
-        width: Math.round(parent.width * 0.7)
-        height: parent.height
-        radius: shape.radius
-        blur: 24 + ambient.level * 10
-        spread: -2 + ambient.level * 3
-        color: Qt.rgba(ambient.leftColor.r, ambient.leftColor.g, ambient.leftColor.b, ambient.strength)
-      }
-      RectangularShadow {
-        x: Math.round(parent.width * 0.3)
-        width: parent.width - x
-        height: parent.height
-        radius: shape.radius
-        blur: 24 + ambient.level * 10
-        spread: -2 + ambient.level * 3
-        color: Qt.rgba(ambient.rightColor.r, ambient.rightColor.g, ambient.rightColor.b, ambient.strength)
-      }
-    }
-
-    // A music bubble's glow, following the bubble.
-    Repeater {
-      model: [rightBubble, leftBubble]
-      delegate: RectangularShadow {
-        required property var modelData
-        readonly property var b: modelData
-        readonly property real level: island.audio.available && island.audio.active ? island.audio.level : 0.45
-        readonly property bool on: island.hyprGlassOn && island.ambientOn && b.kind === "music" && b.shown
-        x: b.x
-        y: b.y
-        width: b.width
-        height: b.height
-        radius: width / 2
-        scale: b.bodyScale
-        blur: 14 + level * 6
-        spread: -2 + level * 2
-        color: Qt.rgba(ambient.leftColor.r, ambient.leftColor.g, ambient.leftColor.b, 0.28 + level * 0.3)
-        opacity: on ? b.opacity : 0
-        visible: opacity > 0.01
-        Behavior on opacity { NumberAnimation { duration: Theme.ms(900); easing.type: Easing.InOutQuad } }
-      }
-    }
+  Loader {
+    id: surfaceLoader
+    active: island.surfaceReady && island.targetScreen !== null
+    asynchronous: false
+    sourceComponent: surfaceHostComponent
   }
 
-  // ================================================================ window
-
-  PanelWindow {
-    id: window
-
-    screen: {
-      var want = island.cfg("screen") || (island.focusedMonitor ? island.focusedMonitor.name : "")
-      var screens = Quickshell.screens
-      for (var i = 0; i < screens.length; i++) if (screens[i].name === want) return screens[i]
-      return screens.length ? screens[0] : null
-    }
-    // Centred at the top (no left/right anchor). Tall enough for the biggest
-    // page (the agent page with its feed expanded) while open; the surface is
-    // transparent and clicks pass through.
-    anchors { top: true }
-    implicitWidth: Math.min(screen ? screen.width : island.surfaceW, island.surfaceW)
-    implicitHeight: island.surfaceH
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    WlrLayershell.namespace: "dynamic-island"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: island.mode === "expanded" ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
-
-    // Only the island (and its bubble) take input; everything else on this
-    // surface clicks straight through to the bar and windows.
-    mask: Region {
-      item: island.fullscreenHidden ? null : maskItem
-      Region { item: island.fullscreenHidden || !rightBubble.shown ? null : rightHit }
-      Region { item: island.fullscreenHidden || !leftBubble.shown ? null : leftHit }
-    }
-
-    FocusScope {
-      id: focusScope
-      anchors.fill: parent
-      focus: true
-
-      Keys.onPressed: event => {
-        if (event.key === Qt.Key_Escape) {
-          if (island.page === "permission" && agents.currentRequest) agents.respond("", "deny")
-          else if (island.page === "timer" && timer.ringing) timer.dismissRing()
-          else island.collapse()
-          event.accepted = true
-        } else if (island.page === "permission" && agents.currentRequest) {
-          if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Y) {
-            agents.respond("", "allow"); event.accepted = true
-          } else if (event.key === Qt.Key_A && agents.currentRequest.canAlways) {
-            agents.respond("", "always"); event.accepted = true
-          } else if (event.key === Qt.Key_N) {
-            agents.respond("", "deny"); event.accepted = true
-          } else if (event.key === Qt.Key_T) {
-            agents.focusTerminal(agents.sessions[agents.currentRequest.session]); event.accepted = true
-          }
-        } else if (island.mode === "expanded" && (event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_Tab) {
-          island.cyclePage(1); event.accepted = true
-        } else if (island.mode === "expanded" && event.key === Qt.Key_BracketRight) {
-          island.cyclePage(1); event.accepted = true
-        } else if (island.mode === "expanded" && event.key === Qt.Key_BracketLeft) {
-          island.cyclePage(-1); event.accepted = true
-        } else if (island.page === "shelf" && island.mode === "expanded" && (event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_V) {
-          // Ctrl+V on the open shelf: what you copied goes on it.
-          island.shelf.addFromClipboard(); event.accepted = true
-        } else if (island.page === "music" && event.key === Qt.Key_Space && island.mode === "expanded") {
-          music.togglePlaying(); event.accepted = true
-        }
-      }
-
-      // ------------------------------------------------------------ shape
-
-      Item {
-        id: stage
-        width: shape.width
-        height: shape.height
-        x: Math.round((parent.width - width) / 2 + island.shakeX + leanX)
-        y: Math.min(0, Math.round(island.introY))
-        opacity: island.fullscreenHidden || island.intro === "hidden" ? 0 : 1
-        scale: (island.fullscreenHidden ? 0.6 : 1) * pressScale
-        transformOrigin: Item.Top
-
-        property real leanX: 0
-        property real pressScale: 1
-
-        Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
-        Behavior on scale {
-          enabled: !Theme.reduceMotion
-          SpringAnimation { spring: Theme.snapSpring; damping: Theme.snapDamping; epsilon: 0.002 }
-        }
-        Behavior on leanX {
-          enabled: !Theme.reduceMotion
-          SpringAnimation { spring: 3; damping: 0.4; epsilon: 0.05 }
-        }
-
-        // The glass's light leans toward the pointer while it is over the
-        // island (from the top-left otherwise).
-        Binding {
-          target: island
-          property: "lightX"
-          value: hover.hovered ? (hover.point.position.x - stage.width / 2) / Math.max(1, stage.width / 2) * 0.9 - 0.2 : -0.55
-        }
-        Binding {
-          target: island
-          property: "lightY"
-          value: hover.hovered ? (hover.point.position.y - stage.height / 2) / Math.max(1, stage.height / 2) * 0.7 - 0.6 : -0.83
-        }
-
-        // The glass reaches for the pointer (compact, glass on).
-        Binding {
-          target: island
-          property: "pullAmp"
-          // Off: hovering the closed island only grows it a little.
-          value: 0
-        }
-        Binding {
-          target: island
-          property: "pullX"
-          when: hover.hovered
-          value: hover.point.position.x / Math.max(0.01, stage.scale)
-        }
-        Binding {
-          target: island
-          property: "pullY"
-          when: hover.hovered
-          value: hover.point.position.y / Math.max(0.01, stage.scale)
-        }
-
-        // The pointer gently pulls the compact island toward itself.
-        Binding {
-          target: stage
-          property: "leanX"
-          // Measured against where the island rests (position + leanX), not
-          // where it has leaned to, or each lean moves the pointer's
-          // relative position and leans it again: that was the jitter.
-          // Under glass the glass itself reaches for the pointer instead.
-          value: island.mode === "compact" && hover.hovered && !island.halvesOn && !island.glassOn
-            ? Math.max(-1, Math.min(1, (hover.point.position.x + stage.leanX - stage.width / 2) / (stage.width / 2))) * 3.5
-            : 0
-        }
-
-        // Ambient light, like YouTube's ambient mode: the artwork's colors
-        // glow softly out of the island's edges while music plays (left and
-        // right take the two most vivid colors) and breathe with the sound
-        // when cava is installed. Kept small: a halo, not a lamp.
-        Item {
-          id: ambient
-          anchors.fill: shape
-          // Only around the player: the island glows when music is the
-          // activity in the middle (or the open music page); when music sits
-          // in a bubble, that bubble glows instead (pages/Bubble.qml).
-          readonly property bool here: island.mode === "expanded" ? island.page === "music"
-            : island.mode === "compact" && island.primary === "music"
-          // Open on the music page, the light moves inside the card instead
-          // (musicBackdrop below), so the outer glow steps aside.
-          opacity: island.ambientOn && here && island.mode !== "expanded" ? 1 : 0
-          visible: opacity > 0.01
-          Behavior on opacity { NumberAnimation { duration: Theme.ms(900); easing.type: Easing.InOutQuad } }
-
-          // A backlight: wide and faint, starting just inside the edge so it
-          // seems to come from behind the island, and swelling softly with
-          // the sound (no flashes).
-          readonly property bool moving: island.audio.available && island.audio.active
-          readonly property real level: moving ? island.audio.level : 0.45
-          readonly property real strength: 0.26 + level * 0.3
-          property color leftColor: island.music.ambient[0]
-          property color rightColor: island.music.ambient[1]
-          Behavior on leftColor { ColorAnimation { duration: 1500 } }
-          Behavior on rightColor { ColorAnimation { duration: 1500 } }
-
-          // With HyprGlass these are drawn on the glow layer instead (see
-          // glowWindow), where HyprGlass cannot turn them into glass.
-          RectangularShadow {
-            visible: !island.hyprGlassOn
-            x: 0
-            width: Math.round(parent.width * 0.7)
-            height: parent.height
-            radius: shape.radius
-            blur: 24 + ambient.level * 10
-            spread: -2 + ambient.level * 3
-            color: Qt.rgba(ambient.leftColor.r, ambient.leftColor.g, ambient.leftColor.b, ambient.strength)
-          }
-          RectangularShadow {
-            visible: !island.hyprGlassOn
-            x: Math.round(parent.width * 0.3)
-            width: parent.width - x
-            height: parent.height
-            radius: shape.radius
-            blur: 24 + ambient.level * 10
-            spread: -2 + ambient.level * 3
-            color: Qt.rgba(ambient.rightColor.r, ambient.rightColor.g, ambient.rightColor.b, ambient.strength)
-          }
-        }
-
-        // Soft drop shadow, only once the island leaves the bar.
-        RectangularShadow {
-          anchors.fill: shape
-          radius: shape.radius
-          blur: 28
-          spread: 0
-          offset.y: 8
-          // Under glass a dark shadow would show through: kept light, and
-          // below the blur threshold so it is never frosted.
-          color: Qt.rgba(0, 0, 0, island.hyprGlassOn ? 0 : Theme.light ? (island.glassOn ? 0.14 : 0.22) : (island.glassOn ? 0.28 : 0.55))
-          opacity: island.mode === "compact" ? 0 : 1
-          Behavior on opacity { NumberAnimation { duration: Theme.ms(260) } }
-        }
-
-        // ---- Liquid Glass surface (the glass bodies of the island, its
-        // halves and the bubbles, in one liquid field). Spans the bubbles'
-        // reach on both sides; coordinates are the stage's own.
-        LiquidGlass {
-          id: liquid
-          visible: island.glassOn && opacity > 0.01
-          opacity: island.idleHidden ? 0 : 1
-          Behavior on opacity { NumberAnimation { duration: Theme.ms(180); easing.type: Easing.OutCubic } }
-          readonly property real s: Math.max(0.01, stage.scale)
-          x: -padX
-          y: -12
-          width: shape.width + padX * 2
-          height: shape.height + 80
-          readonly property real padX: Math.max(80, island.compactH * 2 + 40)
-          // Jelly: the glass stretches and settles on its own while the
-          // content stays put. Top edge is tucked 36px above screen y=0 so no top rim/halo shows.
-          readonly property real jw: shape.width * island.jelly
-          readonly property real jh: -shape.height * island.jelly * 0.55
-          function box(x, y, w, h) { return Qt.vector4d(x + padX - jw / 2, y - 24, w + jw, h + jh + 36) }
-          rectA: island.halvesOn ? box(0, 0, (shape.width - island.splitGap) / 2, shape.height)
-                                 : box(0, 0, shape.width, shape.height)
-          radA: {
-            var r = shape.radius, h = shape.height / 2, inner = Math.min(h, island.splitGap * 2.2)
-            return island.halvesOn ? Qt.vector4d(inner, 0, h, 0) : Qt.vector4d(r, 0, r, 0)
-          }
-          rectB: island.halvesOn ? box(shape.width - (shape.width - island.splitGap) / 2, 0, (shape.width - island.splitGap) / 2, shape.height)
-                                 : Qt.vector4d(0, 0, 0, 0)
-          radB: {
-            var h = shape.height / 2, inner = Math.min(h, island.splitGap * 2.2)
-            return Qt.vector4d(h, 0, inner, 0)
-          }
-          function bubbleAt(b) {
-            void b.x; void b.y; void b.bodyScale; void b.opacity; void stage.x; void stage.y; void stage.scale
-            if (!b.visible || b.opacity < 0.02) return Qt.vector4d(0, 0, 0, 0)
-            var c = stage.mapFromItem(b, b.width / 2, b.height / 2)
-            var r = b.width / 2 * b.bodyScale * Math.min(1, b.opacity * 1.6) / s
-            return Qt.vector4d(c.x + padX, c.y + 12, r, 0)
-          }
-          bub0: bubbleAt(rightBubble)
-          bub1: bubbleAt(leftBubble)
-          blend: island.mode === "compact" ? 11 : 4
-          // Dark glass is smoky; light glass is clear, a thin milky tint.
-          // With HyprGlass the compositor draws the glass: only a trace of
-          // the surface is left, enough for HyprGlass to find its shape.
-          tint: island.hyprGlassOn ? Qt.rgba(Theme.bg.r, Theme.bg.g, Theme.bg.b, 0.04)
-            : Theme.light
-            // Clear while compact; milkier when open, so dark text stays
-            // readable even over a dark window behind (no adaptive vibrancy here).
-            ? Qt.rgba(Theme.bg.r, Theme.bg.g, Theme.bg.b, Math.max(0.08, Math.min(0.95,
-                (Number(island.cfg("glassOpacityLight")) || 0.26) + (island.mode === "compact" ? 0.10 : 0.48))))
-            : Qt.rgba(Theme.bg.r, Theme.bg.g, Theme.bg.b, Math.max(0.36, Math.min(0.95, Number(island.cfg("glassOpacity")) || 0.56)))
-          dark: Theme.light && !island.hyprGlassOn
-          rim: island.hyprGlassOn ? 0 : 1
-          light: island.glassLight
-          energy: island.glassEnergy
-          ambL: ambient.leftColor
-          ambR: ambient.rightColor
-          ambMix: ambient.opacity * (0.55 + ambient.level * 0.45)
-          pull: Qt.vector4d(island.pullX + padX, island.pullY + 12, island.pullAmp, 22)
-        }
-
-        // Drawn directly (no offscreen texture) so text and icons inside stay
-        // pixel-sharp at fractional scales. `clip` is a scissor rectangle:
-        // content keeps clear of the rounded corners.
-        Rectangle {
-          id: shape
-          clip: true
-          width: island.targetW
-          height: Math.max(6, island.targetH + island.bounceY)
-          radius: island.targetR
-          topLeftRadius: 0
-          topRightRadius: 0
-          bottomLeftRadius: island.targetR
-          bottomRightRadius: island.targetR
-          color: island.idleHidden || island.halvesOn || island.glassOn ? "transparent" : Theme.bg
-          border.width: 0
-          antialiasing: true
-
-          // Theme-synced side & bottom border (top edge tucked at y=-1 so y=0 stays flush with screen top)
-          Rectangle {
-            anchors.fill: parent
-            anchors.topMargin: -1
-            color: "transparent"
-            radius: shape.radius
-            topLeftRadius: 0
-            topRightRadius: 0
-            bottomLeftRadius: shape.bottomLeftRadius
-            bottomRightRadius: shape.bottomRightRadius
-            border.width: island.idleHidden || island.halvesOn ? 0 : 1
-            border.color: Theme.edge
-            z: 99
-          }
-
-          Behavior on width {
-            enabled: !Theme.reduceMotion
-            SpringAnimation { spring: island.springK; damping: island.springD; mass: Theme.mass; epsilon: 0.25 }
-          }
-          Behavior on height {
-            enabled: !Theme.reduceMotion
-            SpringAnimation { spring: island.springK; damping: Math.min(0.9, island.springD + 0.03); mass: Theme.mass; epsilon: 0.25 }
-          }
-          Behavior on radius {
-            enabled: !Theme.reduceMotion
-            SpringAnimation { spring: Theme.closeSpring; damping: 0.5; epsilon: 0.1 }
-          }
-
-          // Music page backdrop, like Apple Music: the artwork's colors fill
-          // the open card as large, heavily blurred blobs that drift slowly.
-          // Masked to the card's rounded shape; only this layer is rendered
-          // offscreen, the text above stays sharp.
-          Item {
-            id: musicBackdrop
-            anchors.fill: parent
-            // Opening onto the music page, the colors come in with the card
-            // as it grows (no black first). Between tabs they cross-fade
-            // quickly. Closing, they vanish at once, so nothing is drawn
-            // while the card shrinks into the compact island.
-            readonly property bool expanded: island.mode === "expanded"
-            readonly property bool on: island.cfg("ambient") && expanded
-              && island.page === "music" && island.music.available
-            readonly property bool moving: on && !Theme.reduceMotion
-            // Over HyprGlass a lighter wash, so the colors tint the glass
-            // and the refraction still shows through.
-            opacity: on ? (island.hyprGlassOn ? 0.6 : 1) : 0
-            visible: opacity > 0.005
-            Behavior on opacity {
-              enabled: musicBackdrop.expanded
-              NumberAnimation { duration: Theme.ms(280); easing.type: Easing.OutCubic }
-            }
-
-            // Dark: deepened so white text reads; light: washed out so dark
-            // text does.
-            property color c1: Theme.light ? Qt.tint(island.music.ambient[0], Qt.rgba(1, 1, 1, 0.55)) : Qt.darker(island.music.ambient[0], 1.5)
-            property color c2: Theme.light ? Qt.tint(island.music.ambient[1], Qt.rgba(1, 1, 1, 0.55)) : Qt.darker(island.music.ambient[1], 1.5)
-            Behavior on c1 { ColorAnimation { duration: 1500 } }
-            Behavior on c2 { ColorAnimation { duration: 1500 } }
-
-            // Blob positions as fractions of the card, each drifting on its
-            // own slow loop so the pattern never visibly repeats.
-            // Blob positions as fractions of the card, each drifting on its
-            // own slow loop so the pattern never visibly repeats.
-            property real ax: 0.18
-            property real ay: 0.25
-            property real bx: 0.82
-            property real by: 0.7
-            property real cx: 0.5
-            property real cy: 0.9
-            SequentialAnimation {
-              loops: Animation.Infinite
-              running: musicBackdrop.moving
-              NumberAnimation { target: musicBackdrop; property: "ax"; to: 0.08; duration: 9000; easing.type: Easing.InOutSine }
-              NumberAnimation { target: musicBackdrop; property: "ax"; to: 0.45; duration: 9000; easing.type: Easing.InOutSine }
-            }
-            SequentialAnimation {
-              loops: Animation.Infinite
-              running: musicBackdrop.moving
-              NumberAnimation { target: musicBackdrop; property: "ay"; to: 0.15; duration: 11000; easing.type: Easing.InOutSine }
-              NumberAnimation { target: musicBackdrop; property: "ay"; to: 0.75; duration: 11000; easing.type: Easing.InOutSine }
-            }
-            SequentialAnimation {
-              loops: Animation.Infinite
-              running: musicBackdrop.moving
-              NumberAnimation { target: musicBackdrop; property: "bx"; to: 0.92; duration: 10000; easing.type: Easing.InOutSine }
-              NumberAnimation { target: musicBackdrop; property: "bx"; to: 0.5; duration: 10000; easing.type: Easing.InOutSine }
-            }
-            SequentialAnimation {
-              loops: Animation.Infinite
-              running: musicBackdrop.moving
-              NumberAnimation { target: musicBackdrop; property: "by"; to: 0.85; duration: 12500; easing.type: Easing.InOutSine }
-              NumberAnimation { target: musicBackdrop; property: "by"; to: 0.2; duration: 12500; easing.type: Easing.InOutSine }
-            }
-            SequentialAnimation {
-              loops: Animation.Infinite
-              running: musicBackdrop.moving
-              NumberAnimation { target: musicBackdrop; property: "cx"; to: 0.3; duration: 13000; easing.type: Easing.InOutSine }
-              NumberAnimation { target: musicBackdrop; property: "cx"; to: 0.75; duration: 13000; easing.type: Easing.InOutSine }
-            }
-            SequentialAnimation {
-              loops: Animation.Infinite
-              running: musicBackdrop.moving
-              NumberAnimation { target: musicBackdrop; property: "cy"; to: 0.95; duration: 9500; easing.type: Easing.InOutSine }
-              NumberAnimation { target: musicBackdrop; property: "cy"; to: 0.45; duration: 9500; easing.type: Easing.InOutSine }
-            }
-
-            Item {
-              id: blobs
-              anchors.fill: parent
-              visible: false
-              // Kept ready while the card is open, so a fade-in never starts
-              // with an unblurred frame.
-              layer.enabled: musicBackdrop.expanded
-              // Rendered small and scaled up: blurring a low-resolution
-              // texture gives the very soft, edgeless look.
-              layer.textureSize: Qt.size(Math.max(8, Math.round(width / 8)), Math.max(8, Math.round(height / 8)))
-              layer.smooth: true
-              readonly property real d: Math.max(width, height) * 0.95
-              Rectangle {
-                width: blobs.d; height: width; radius: width / 2
-                x: blobs.width * musicBackdrop.ax - width / 2
-                y: blobs.height * musicBackdrop.ay - height / 2
-                color: musicBackdrop.c1
-              }
-              Rectangle {
-                width: blobs.d * 0.9; height: width; radius: width / 2
-                x: blobs.width * musicBackdrop.bx - width / 2
-                y: blobs.height * musicBackdrop.by - height / 2
-                color: musicBackdrop.c2
-              }
-              Rectangle {
-                width: blobs.d * 0.6; height: width; radius: width / 2
-                x: blobs.width * musicBackdrop.cx - width / 2
-                y: blobs.height * musicBackdrop.cy - height / 2
-                color: Qt.tint(musicBackdrop.c1, Qt.rgba(musicBackdrop.c2.r, musicBackdrop.c2.g, musicBackdrop.c2.b, 0.5))
-              }
-            }
-            Rectangle {
-              id: backdropMask
-              anchors.fill: parent
-              radius: shape.radius
-              topLeftRadius: 0
-              topRightRadius: 0
-              bottomLeftRadius: shape.radius
-              bottomRightRadius: shape.radius
-              visible: false
-              layer.enabled: musicBackdrop.expanded
-            }
-            MultiEffect {
-              anchors.fill: parent
-              source: blobs
-              blurEnabled: true
-              blur: 1
-              blurMax: 64
-              // No padding: the effect must not draw past the card.
-              autoPaddingEnabled: false
-              maskEnabled: true
-              maskSource: backdropMask
-              opacity: 0.7
-            }
-          }
-
-          // Two agents at work: the pill as two halves with a gap between.
-          // At gap 0 they are exactly the whole pill, so the split and the
-          // merge are seamless.
-          Repeater {
-            model: island.halvesOn ? [0, 1] : []
-            delegate: Rectangle {
-              required property int modelData
-              readonly property real inner: Math.min(height / 2, island.splitGap * 2.2)
-              width: (shape.width - island.splitGap) / 2
-              height: shape.height
-              x: modelData === 0 ? 0 : shape.width - width
-              readonly property bool lit: island.hoveredHalf === modelData
-              readonly property color agentTint: island.profile(island.splitOrder[modelData] || "").color
-              color: island.glassOn ? "transparent" : Theme.bg
-              border.width: lit ? 1.5 : 1
-              border.color: lit ? Qt.rgba(agentTint.r, agentTint.g, agentTint.b, 0.6) : island.glassOn ? "transparent" : Theme.edge
-              Behavior on border.color { ColorAnimation { duration: Theme.ms(160) } }
-              topLeftRadius: 0
-              bottomLeftRadius: modelData === 0 ? height / 2 : inner
-              topRightRadius: 0
-              bottomRightRadius: modelData === 1 ? height / 2 : inner
-            }
-          }
-
-          // Background press target: compact/peek expand on click.
-          MouseArea {
-            id: shapeMouse
-            anchors.fill: parent
-            cursorShape: island.mode === "expanded" ? Qt.ArrowCursor : Qt.PointingHandCursor
-            acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
-            onPressed: if (island.mode !== "expanded") { stage.pressScale = 0.95; island.wobble(-0.03) }
-            onReleased: { stage.pressScale = 1; if (island.mode !== "expanded") island.flash() }
-            onCanceled: stage.pressScale = 1
-            onClicked: mouseEvent => {
-              if (island.mode === "expanded") return
-              if (mouseEvent.button === Qt.MiddleButton && island.primary === "music") { music.togglePlaying(); return }
-              if (mouseEvent.button === Qt.RightButton) { island.openPage("home", "pointer"); return }
-              var target = island.mode === "peek" && island.peekData.target ? island.peekData.target : island.defaultPage()
-              island.openPage(target, "pointer")
-            }
-            onWheel: wheel => {
-              if (island.mode === "expanded") { island.wheelTabs(wheel); return }
-              // Scroll on the compact island nudges the volume, as on macOS notch apps.
-              Quickshell.execDetached(["omarchy-audio-output-volume", wheel.angleDelta.y > 0 ? "+5" : "-5"])
-            }
-
-            Accessible.role: Accessible.Button
-            Accessible.name: "Dynamic Island"
-            Accessible.description: island.mode === "expanded" ? I18n.t("Açık") : I18n.t("Açmak için tıklayın")
-          }
-
-          // Drag files in → the shelf opens under the pointer.
-          DropArea {
-            anchors.fill: parent
-            keys: ["text/uri-list"]
-            onEntered: drag => {
-              if (!drag.hasUrls) { drag.accepted = false; return }
-              island.dragHover = true
-              if (island.page !== "shelf" || island.mode !== "expanded") island.openPage("shelf", "pointer")
-            }
-            onExited: island.dragHover = false
-            onDropped: drop => {
-              island.dragHover = false
-              var n = shelf.addUrls(drop.urls)
-              if (n > 0) {
-                drop.acceptProposedAction()
-                island.bounce()
-              }
-            }
-          }
-
-          // ---------------------------------------------------- compact
-          CompactView {
-            anchors.fill: parent
-            shown: island.mode === "compact" && island.introDone
-            island: island
-          }
-
-          // ---------------------------------------------------- peek
-          PeekView {
-            anchors.fill: parent
-            shown: island.mode === "peek"
-            island: island
-          }
-
-          // ---------------------------------------------------- expanded
-          TabStrip {
-            id: tabs
-            anchors.top: parent.top
-            anchors.topMargin: 8
-            x: Math.round((parent.width - width) / 2)
-            width: island.expandedW - 28
-            shown: island.mode === "expanded" && island.page !== "permission"
-            island: island
-          }
-
-          Item {
-            id: pageStack
-            anchors.top: parent.top
-            anchors.topMargin: island.expandedChromeH + 4
-            x: Math.round((parent.width - width) / 2)
-            width: island.expandedW - 40
-            height: currentHeight
-
-            readonly property bool open: island.mode === "expanded"
-            readonly property int currentHeight: {
-              switch (island.page) {
-                case "music": return musicPage.implicitHeight
-                case "agent": return agentPage.implicitHeight
-                case "permission": return permissionPage.implicitHeight
-                case "timer": return timerPage.implicitHeight
-                case "shelf": return shelfPage.implicitHeight
-                default: return homePage.implicitHeight
-              }
-            }
-
-            HomePage { slide: island.pageSlide; id: homePage; island: island; width: parent.width; shown: pageStack.open && island.page === "home" }
-            MusicPage { slide: island.pageSlide; id: musicPage; island: island; width: parent.width; shown: pageStack.open && island.page === "music" }
-            AgentPage { slide: island.pageSlide; id: agentPage; island: island; width: parent.width; shown: pageStack.open && island.page === "agent" }
-            PermissionPage { slide: island.pageSlide; id: permissionPage; island: island; width: parent.width; shown: pageStack.open && island.page === "permission" }
-            TimerPage { slide: island.pageSlide; id: timerPage; island: island; width: parent.width; shown: pageStack.open && island.page === "timer" }
-            ShelfPage { slide: island.pageSlide; id: shelfPage; island: island; width: parent.width; shown: pageStack.open && island.page === "shelf" }
-          }
-
-          // Hover is tracked strictly on the island shape itself.
-          HoverHandler {
-            id: hover
-          }
-        }
-      }
-
-      // Input mask follows the exact shape size.
-      Item {
-        id: maskItem
-        x: stage.x
-        y: stage.y
-        width: shape.width
-        height: shape.height
-      }
-
-      // ------------------------------------------------------------ bubbles
-      // Extra live activities split off as small circles, like iOS: the
-      // second to the right, a third to the left. Each works on its own.
-      Bubble {
-        id: rightBubble
-        island: island
-        anchor: stage
-        side: 1
-        activity: island.secondary
-      }
-      Bubble {
-        id: leftBubble
-        island: island
-        anchor: stage
-        side: -1
-        activity: island.tertiary
-      }
-      Item { id: rightHit; x: rightBubble.x; y: rightBubble.y; width: rightBubble.width; height: rightBubble.height }
-      Item { id: leftHit; x: leftBubble.x; y: leftBubble.y; width: leftBubble.width; height: leftBubble.height }
+  Component {
+    id: surfaceHostComponent
+    SurfaceHost {
+      host: island
     }
   }
 }

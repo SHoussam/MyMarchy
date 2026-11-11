@@ -20,6 +20,7 @@ var profiles = {
   "codex":        { name: "Codex",    product: "Codex",       logo: "openai",       color: "#E6E6E6", glow: "#FFFFFF", frames: braille, pingpong: false, interval: 80,  integration: "full",   always: false, bin: "codex",    launch: ["codex"] },
   "antigravity":  { name: "Antigravity", product: "Antigravity CLI", logo: "antigravity", color: "#7FA6FF", glow: "#C3D6FF", frames: braille, pingpong: false, interval: 80, integration: "full", always: true, bin: "agy", launch: ["agy"] },
   "opencode":     { name: "OpenCode", product: "OpenCode",    logo: "opencode",     color: "#E6E6E6", glow: "#FFFFFF", frames: braille, pingpong: false, interval: 80,  integration: "full",   always: true,  bin: "opencode", launch: ["opencode"] },
+  "lmstudio":     { name: "LM Studio", product: "LM Studio",  logo: "lmstudio",     color: "#9D7CF4", glow: "#D2C4FF", frames: braille, pingpong: false, interval: 80,  integration: "status", always: false, gui: true, bin: "lm-studio", launch: ["lm-studio"] },
   // Omarchy can still set Gemini CLI as its default agent; the island only
   // brands it (its hooks were replaced by Antigravity's).
   "gemini":       { name: "Gemini",   product: "Gemini CLI",  logo: "googlegemini", color: "#8E75B2", glow: "#C9B8E6", frames: braille, pingpong: false, interval: 80,  integration: "none",   always: false },
@@ -35,7 +36,7 @@ var profiles = {
 }
 
 // Agents the island connects to, in the order the agent bar shows them.
-var connectable = ["claude", "codex", "antigravity", "opencode"]
+var connectable = ["claude", "codex", "antigravity", "opencode", "lmstudio"]
 
 function get(id) {
   return profiles[id] || { name: id || "Agent", product: id || "Agent", logo: "", color: "#E6E6E6", glow: "#FFFFFF",

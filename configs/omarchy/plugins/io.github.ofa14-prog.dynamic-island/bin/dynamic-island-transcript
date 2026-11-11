@@ -3,7 +3,7 @@
 preview: the last prompts, replies, tool calls and their output, the way the
 agent's own terminal shows them.
 
-  dynamic-island-transcript <claude|codex|antigravity> <transcript.jsonl> [count] [lines-per-output]
+  dynamic-island-transcript <claude|codex|antigravity|opencode> <transcript-path> [count] [lines-per-output]
 
 Prints one JSON array: [{"k": kind, "t": text, "d": detail, "err": bool}]
   kind  prompt | text | tool | result | interrupt
@@ -13,6 +13,7 @@ Only the file's tail is read, so it stays cheap on long sessions.
 import json
 import os
 import re
+import sqlite3
 import sys
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|[\x00-\x08\x0b-\x1f]")
@@ -267,6 +268,77 @@ def antigravity(entries):
     return flatten(items)
 
 
+# ---------------------------------------------------------------- OpenCode
+
+OPENCODE_LABELS = {
+    "bash": "Bash", "shell": "Bash", "edit": "Edit", "write": "Write",
+    "read": "Read", "glob": "Find", "grep": "Search", "webfetch": "Fetch",
+    "websearch": "WebSearch", "task": "Task", "question": "Question",
+}
+
+
+def opencode(ref, count):
+    if "#" not in ref:
+        return []
+    db, sid = ref.split("#", 1)
+    if not db or not sid or not os.path.exists(db):
+        return []
+    items = []
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=0.4)
+        rows = con.execute(
+            "SELECT type, data FROM session_message WHERE session_id = ? "
+            "AND type IN ('user', 'assistant', 'idle') ORDER BY seq DESC LIMIT ?",
+            (sid, max(40, count * 3)),
+        ).fetchall()
+        con.close()
+    except (sqlite3.Error, OSError):
+        return []
+
+    for msg_type, raw in reversed(rows):
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            continue
+        if msg_type == "user":
+            txt = d.get("text", "")
+            if isinstance(txt, str) and txt.strip():
+                items.append({"k": "prompt", "t": one_line(txt)})
+        elif msg_type == "idle":
+            if d.get("outcome") == "interrupted":
+                items.append({"k": "interrupt", "t": "Interrupted"})
+        elif msg_type == "assistant":
+            for p in d.get("content") or []:
+                if not isinstance(p, dict):
+                    continue
+                pt = p.get("type")
+                if pt == "text" and isinstance(p.get("text"), str) and p["text"].strip():
+                    items.append({"k": "text", "t": first_lines(p["text"], None if RESULT_LINES <= 0 else max(2, RESULT_LINES), 220)})
+                elif pt == "tool":
+                    name = str(p.get("name") or "tool")
+                    st = p.get("state") if isinstance(p.get("state"), dict) else {}
+                    inp = st.get("input") if isinstance(st.get("input"), dict) else {}
+                    # OpenCode often uses camelCase filePath
+                    if "filePath" in inp and "file_path" not in inp:
+                        inp = {**inp, "file_path": inp["filePath"]}
+                    tool = {"k": "tool", "t": OPENCODE_LABELS.get(name, name), "d": tool_args(inp)}
+                    status = st.get("status")
+                    if status == "error":
+                        err_obj = st.get("error")
+                        err_msg = err_obj.get("message", "") if isinstance(err_obj, dict) else str(err_obj or "")
+                        if not err_msg:
+                            err_msg = text_of(st.get("content"))
+                        tool["res"] = {"k": "result", "t": first_lines(err_msg) or "error", "err": True}
+                    elif status == "completed":
+                        out = st.get("content")
+                        out_txt = text_of(out) if not isinstance(out, str) else out
+                        if not out_txt and isinstance(st.get("output"), str):
+                            out_txt = st["output"]
+                        tool["res"] = {"k": "result", "t": first_lines(out_txt) or "(no output)", "err": False}
+                    items.append(tool)
+    return flatten(items)
+
+
 def main():
     if len(sys.argv) < 3:
         raise SystemExit(__doc__)
@@ -274,35 +346,38 @@ def main():
     count = int(sys.argv[3]) if len(sys.argv) > 3 else 10
     global RESULT_LINES
     RESULT_LINES = max(0, int(sys.argv[4])) if len(sys.argv) > 4 else 2   # 0: all
-    parse = codex if agent == "codex" else antigravity if agent == "antigravity" else claude
-    # Step back from the end until there is enough to show: a pasted image
-    # or a long tool output can make a single entry megabytes long.
-    items, lines, rest = [], [], b""
-    try:
-        with open(path, "rb") as f:
-            pos = f.seek(0, os.SEEK_END)
-            read = 0
-            while pos > 0 and read < MAX_BYTES:
-                step = min(CHUNK, pos)
-                pos -= step
-                f.seek(pos)
-                block = f.read(step) + rest
-                read += step
-                parts = block.split(b"\n")
-                rest = parts[0] if pos > 0 else b""    # may be cut: finish it next round
-                fresh = []
-                for raw in parts[1:] if pos > 0 else parts:
-                    if raw.strip():
-                        try:
-                            fresh.append(json.loads(raw))
-                        except ValueError:
-                            pass
-                lines = fresh + lines
-                items = parse([dict(e) for e in lines])
-                if len(items) >= count:
-                    break
-    except OSError:
-        pass
+    if agent == "opencode":
+        items = opencode(path, count)
+    else:
+        parse = codex if agent == "codex" else antigravity if agent == "antigravity" else claude
+        # Step back from the end until there is enough to show: a pasted image
+        # or a long tool output can make a single entry megabytes long.
+        items, lines, rest = [], [], b""
+        try:
+            with open(path, "rb") as f:
+                pos = f.seek(0, os.SEEK_END)
+                read = 0
+                while pos > 0 and read < MAX_BYTES:
+                    step = min(CHUNK, pos)
+                    pos -= step
+                    f.seek(pos)
+                    block = f.read(step) + rest
+                    read += step
+                    parts = block.split(b"\n")
+                    rest = parts[0] if pos > 0 else b""    # may be cut: finish it next round
+                    fresh = []
+                    for raw in parts[1:] if pos > 0 else parts:
+                        if raw.strip():
+                            try:
+                                fresh.append(json.loads(raw))
+                            except ValueError:
+                                pass
+                    lines = fresh + lines
+                    items = parse([dict(e) for e in lines])
+                    if len(items) >= count:
+                        break
+        except OSError:
+            pass
     # Bounded output: the shell reads all of it into memory. Oldest items go
     # first until the JSON fits.
     items = items[-count:]

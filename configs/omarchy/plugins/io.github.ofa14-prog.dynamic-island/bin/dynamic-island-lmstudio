@@ -1,0 +1,331 @@
+#!/usr/bin/env python3
+"""Inspect LM Studio / local llama-server runtime and loaded models cleanly.
+
+Usage:
+  dynamic-island-lmstudio               Print JSON state (running, loaded, downloaded)
+  dynamic-island-lmstudio --load KEY    Load a downloaded model via lms load
+  dynamic-island-lmstudio --unload KEY  Unload a loaded model via lms unload
+
+Uses zero heavy CLI calls while models are idle: reads /proc ticks and LM Studio's
+local /api/v1/models endpoint (~8 ms), invoking `lms ps --json` only when llama-server
+CPU ticks advance or the HTTP API is disabled.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+HOME = os.path.expanduser("~")
+RUNTIME = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "dynamic-island")
+TICK_STATE = os.path.join(RUNTIME, "lmstudio-ticks.json")
+
+
+def find_lms():
+    p = shutil.which("lms")
+    if p:
+        return p
+    cand = os.path.join(HOME, ".lmstudio", "bin", "lms")
+    return cand if os.path.isfile(cand) and os.access(cand, os.X_OK) else ""
+
+
+def read_json(path, default=None):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def server_endpoint():
+    cfg = read_json(os.path.join(HOME, ".lmstudio", ".internal", "http-server-config.json"), {})
+    port = int(cfg.get("port") or 1234)
+    host = str(cfg.get("networkInterface") or "127.0.0.1")
+    if host in ("0.0.0.0", "::", ""):
+        host = "127.0.0.1"
+    return host, port
+
+
+def read_proc():
+    lm_pids = []
+    llama_procs = []
+    procs = {}
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as f:
+                stat = f.read().decode("utf-8", "replace")
+            lpar = stat.index("(")
+            rpar = stat.rindex(")")
+            comm = stat[lpar + 1 : rpar]
+            rest = stat[rpar + 2 :].split()
+            ppid = int(rest[1])
+            procs[pid] = (comm, ppid)
+        except (OSError, ValueError, IndexError):
+            continue
+
+    def has_lmstudio_ancestor(pid):
+        cur, steps = pid, 0
+        while cur > 1 and steps < 12:
+            info = procs.get(cur)
+            if not info:
+                break
+            if "lm-studio" in info[0]:
+                return True
+            cur = info[1]
+            steps += 1
+        return False
+
+    for pid, (comm, ppid) in procs.items():
+        if comm.startswith("lm-studio"):
+            try:
+                cmd = open(f"/proc/{pid}/cmdline", "rb").read().decode("utf-8", "replace").split("\0")
+            except OSError:
+                cmd = []
+            # Main Electron / AppImage child (not --type=zygote / --type=renderer / AppImage fuse wrapper)
+            if "lm-studio" == comm and not any(a.startswith("--type=") for a in cmd[1:]):
+                lm_pids.append(pid)
+        elif comm == "llama-server":
+            try:
+                cmd = open(f"/proc/{pid}/cmdline", "rb").read().decode("utf-8", "replace").split("\0")
+            except OSError:
+                cmd = []
+            ticks = 0
+            try:
+                for tid in os.listdir(f"/proc/{pid}/task"):
+                    try:
+                        with open(f"/proc/{pid}/task/{tid}/stat", "rb") as f:
+                            s = f.read().decode("utf-8", "replace")
+                        r = s[s.rindex(")") + 2 :].split()
+                        ticks += int(r[11]) + int(r[12])
+                    except (OSError, ValueError, IndexError):
+                        pass
+            except OSError:
+                pass
+            model_path, ctx_size, port = "", 0, 0
+            for i, arg in enumerate(cmd):
+                if arg in ("--model", "-m") and i + 1 < len(cmd):
+                    model_path = cmd[i + 1]
+                elif arg in ("--ctx-size", "-c") and i + 1 < len(cmd):
+                    try:
+                        ctx_size = int(cmd[i + 1])
+                    except ValueError:
+                        pass
+                elif arg == "--port" and i + 1 < len(cmd):
+                    try:
+                        port = int(cmd[i + 1])
+                    except ValueError:
+                        pass
+            llama_procs.append({
+                "pid": pid,
+                "ppid": ppid,
+                "lmstudio": has_lmstudio_ancestor(pid),
+                "modelPath": model_path,
+                "ctx": ctx_size,
+                "port": port,
+                "ticks": ticks,
+            })
+
+    return (min(lm_pids) if lm_pids else 0), llama_procs
+
+
+def fetch_http_models(host, port):
+    url = f"http://{host}:{port}/api/v1/models"
+    try:
+        with urllib.request.urlopen(url, timeout=0.6) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+        return True, data.get("models") or []
+    except (OSError, ValueError, urllib.error.URLError):
+        return False, []
+
+
+def run_lms_ps(lms):
+    if not lms:
+        return []
+    try:
+        out = subprocess.check_output([lms, "ps", "--json"], timeout=2.5, stderr=subprocess.DEVNULL)
+        data = json.loads(out.decode("utf-8", "replace"))
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+
+
+def load_tick_state():
+    return read_json(TICK_STATE, {"ticks": {}, "busy": False, "ts": 0}) or {"ticks": {}, "busy": False, "ts": 0}
+
+
+def save_tick_state(ticks_map, busy):
+    try:
+        os.makedirs(RUNTIME, mode=0o700, exist_ok=True)
+        tmp = TICK_STATE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"ticks": ticks_map, "busy": bool(busy), "ts": time.time()}, f)
+        os.replace(tmp, TICK_STATE)
+    except OSError:
+        pass
+
+
+def match_llama_pid(key, name, llama_procs):
+    tokens = [t for t in str(key or "").lower().replace("/", "-").split("-") if len(t) > 2]
+    for lp in llama_procs:
+        base = os.path.basename(lp["modelPath"]).lower()
+        if base and key and os.path.basename(key).lower().replace(":", "-") in base:
+            return lp
+        if base and tokens and all(t in base for t in tokens[:2]):
+            return lp
+    lm_only = [lp for lp in llama_procs if lp["lmstudio"]]
+    return lm_only[0] if len(lm_only) == 1 else None
+
+
+def probe():
+    host, port = server_endpoint()
+    gui_pid, llama_procs = read_proc()
+    server_up, http_models = fetch_http_models(host, port)
+    lms = find_lms()
+    prev = load_tick_state()
+    prev_ticks = prev.get("ticks") or {}
+
+    cur_ticks = {str(lp["pid"]): lp["ticks"] for lp in llama_procs}
+    max_delta = 0
+    for lp in llama_procs:
+        pid_k = str(lp["pid"])
+        if pid_k in prev_ticks:
+            max_delta = max(max_delta, lp["ticks"] - int(prev_ticks[pid_k]))
+
+    downloaded = []
+    for m in http_models:
+        if not isinstance(m, dict):
+            continue
+        quant = m.get("quantization") if isinstance(m.get("quantization"), dict) else {}
+        downloaded.append({
+            "key": m.get("key") or "",
+            "name": m.get("display_name") or m.get("key") or "",
+            "params": m.get("params_string") or "",
+            "quant": quant.get("name") or "",
+            "maxCtx": int(m.get("max_context_length") or 0),
+            "type": m.get("type") or "llm",
+        })
+
+    loaded_http = []
+    for m in http_models:
+        insts = m.get("loaded_instances") or []
+        if not insts:
+            continue
+        quant = m.get("quantization") if isinstance(m.get("quantization"), dict) else {}
+        for inst in insts:
+            cfg = inst.get("config") if isinstance(inst.get("config"), dict) else {}
+            loaded_http.append({
+                "key": m.get("key") or "",
+                "instance": inst.get("id") or m.get("key") or "",
+                "name": m.get("display_name") or m.get("key") or "",
+                "params": m.get("params_string") or "",
+                "quant": quant.get("name") or "",
+                "ctx": int(cfg.get("context_length") or m.get("max_context_length") or 0),
+            })
+
+    # Verify exact generation state with `lms ps --json` ONLY when ticks jump,
+    # while cooling down from a busy state, or when HTTP server isn't exposing it.
+    lm_llama = [lp for lp in llama_procs if lp["lmstudio"]]
+    need_lms_ps = bool(
+        lms and (
+            max_delta >= 3
+            or prev.get("busy")
+            or (lm_llama and not loaded_http)
+        )
+    )
+
+    loaded = []
+    if need_lms_ps:
+        ps = run_lms_ps(lms)
+        for item in ps:
+            if not isinstance(item, dict):
+                continue
+            quant = item.get("quantization") if isinstance(item.get("quantization"), dict) else {}
+            key = item.get("modelKey") or item.get("identifier") or ""
+            name = item.get("displayName") or key
+            lp = match_llama_pid(key, name, lm_llama)
+            loaded.append({
+                "key": key,
+                "instance": item.get("identifier") or key,
+                "name": name,
+                "params": item.get("paramsString") or "",
+                "quant": quant.get("name") or "",
+                "ctx": int(item.get("contextLength") or item.get("maxContextLength") or 0),
+                "status": item.get("status") or "idle",
+                "queued": int(item.get("queued") or 0),
+                "pid": lp["pid"] if lp else gui_pid,
+                "lastUsed": int(item.get("lastUsedTime") or 0),
+            })
+
+    if not loaded and loaded_http:
+        for item in loaded_http:
+            lp = match_llama_pid(item["key"], item["name"], lm_llama)
+            loaded.append({
+                **item,
+                "status": "idle",
+                "queued": 0,
+                "pid": lp["pid"] if lp else gui_pid,
+                "lastUsed": 0,
+            })
+
+    # Include any unmatched llama-server (standalone or when HTTP API & lms are both unavailable)
+    matched_pids = {m.get("pid") for m in loaded if m.get("pid")}
+    for lp in llama_procs:
+        if lp["lmstudio"] and (loaded or lp["pid"] in matched_pids):
+            continue
+        pid_k = str(lp["pid"])
+        delta = lp["ticks"] - int(prev_ticks.get(pid_k, lp["ticks"]))
+        base = os.path.basename(lp["modelPath"]).removesuffix(".gguf") or f"llama-{lp['pid']}"
+        loaded.append({
+            "key": base,
+            "instance": f"llama-{lp['pid']}",
+            "name": base,
+            "params": "",
+            "quant": "",
+            "ctx": lp["ctx"],
+            "status": "generating" if delta >= 3 else "idle",
+            "queued": 0,
+            "pid": lp["pid"],
+            "lastUsed": 0,
+            "standalone": not lp["lmstudio"],
+        })
+
+    busy_now = any(m.get("status") == "generating" or (m.get("queued") or 0) > 0 for m in loaded)
+    save_tick_state(cur_ticks, busy_now)
+
+    return {
+        "running": bool(gui_pid or server_up or llama_procs),
+        "server": server_up,
+        "port": port,
+        "guiPid": gui_pid,
+        "loaded": loaded,
+        "downloaded": downloaded,
+    }
+
+
+def main():
+    lms = find_lms()
+    if "--load" in sys.argv:
+        idx = sys.argv.index("--load")
+        key = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else ""
+        if not lms or not key:
+            raise SystemExit(1)
+        os.execv(lms, [lms, "load", key, "-y"])
+    if "--unload" in sys.argv:
+        idx = sys.argv.index("--unload")
+        key = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else ""
+        if not lms or not key:
+            raise SystemExit(1)
+        os.execv(lms, [lms, "unload", key])
+
+    print(json.dumps(probe(), ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

@@ -10,14 +10,12 @@ Page {
   property var island
   height: 36
 
-  readonly property var meta: ({
-    home:   { icon: "home",   name: I18n.t("Ana") },
-    music:  { icon: "music",  name: I18n.t("Müzik") },
-    // The AI tab names the agent that is running: one → its mark and name;
-    // several → only their marks (two, then "…"); none → "AI".
-    agent:  { icon: "sparkles", name: island.runningAgents.length === 1 ? island.profile(island.runningAgents[0]).name : "AI" },
-    timer:  { icon: "timer",  name: I18n.t("Sayaç") },
-    shelf:  { icon: "shelf",  name: I18n.t("Raf") }
+  readonly property var icons: ({
+    home:  "home",
+    music: "music",
+    agent: "sparkles",
+    timer: "timer",
+    shelf: "shelf"
   })
   readonly property var names: ({ home: I18n.t("Ana sayfa"), music: I18n.t("Müzik"),
     agent: "AI" + (island.runningAgents.length ? ": " + island.runningAgents.map(id => island.profile(id).product).join(", ") : ""),
@@ -204,7 +202,7 @@ GlassSheen { strength: 0.7 }
       required property int index
       readonly property string key: modelData
       readonly property bool current: island.page === key
-      readonly property var info: strip.meta[key] || { icon: "", name: key }
+      readonly property string baseIcon: strip.icons[key] || ""
       x: index * strip.segment
       width: strip.segment
       height: strip.height
@@ -228,15 +226,8 @@ GlassSheen { strength: 0.7 }
         visible: tab.activeFocus
       }
 
-      // Icon + label measured as one block and centered in the segment.
-      // Long labels (some languages) step down instead of spilling over:
-      // first a 12 px font, then no icon, then an ellipsis.
-      readonly property real room: strip.segment - 10
-      TextMetrics { id: wide; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.DemiBold; text: tab.info.name }
-      readonly property int fontSize: 21 + wide.advanceWidth <= room ? 13 : 12
-      // The AI tab always keeps the running agent's mark; its name gives way.
-      readonly property bool showIcon: key === "agent" || 21 + Math.min(wide.advanceWidth, label.implicitWidth) <= room
-      // Several agents running: their marks side by side, no name.
+      // Icon-only tabs for style: several agents running → marks side by side;
+      // otherwise a single centered icon (running agent mark or tab icon).
       readonly property bool marksOnly: key === "agent" && island.runningAgents.length > 1
       Row {
         visible: tab.marksOnly
@@ -258,51 +249,35 @@ GlassSheen { strength: 0.7 }
           anchors.verticalCenter: parent.verticalCenter
           text: "…"
           font.pixelSize: 13
-          color: tab.current ? Theme.fg : Theme.secondary
+          color: tab.current || tabMouse.containsMouse ? Theme.fg : Theme.secondary
         }
       }
-      Item {
+      Icon {
         visible: !tab.marksOnly
         anchors.centerIn: parent
-        width: (tab.showIcon ? 21 : 0) + label.width
-        height: 18
-        Icon {
-          visible: tab.showIcon
-          anchors.left: parent.left
-          anchors.verticalCenter: parent.verticalCenter
-          size: 16
-          readonly property string running: tab.key === "agent" && island.runningAgents.length === 1 ? island.runningAgents[0] : ""
-          source: running ? island.logoFor(running) : ""
-          name: source ? "" : tab.info.icon
-          color: running ? island.profile(running).color : tab.current ? Theme.fg : Theme.secondary
-        }
-        Label {
-          id: label
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          width: Math.min(implicitWidth, tab.room - (tab.showIcon ? 21 : 0))
-          text: tab.info.name
-          font.pixelSize: tab.fontSize
-          strong: tab.current
-          color: tab.current ? Theme.fg : Theme.secondary
-          Behavior on color { ColorAnimation { duration: Theme.ms(160) } }
-        }
+        size: 18
+        readonly property string running: tab.key === "agent" && island.runningAgents.length === 1 ? island.runningAgents[0] : ""
+        source: running ? island.logoFor(running) : ""
+        name: source ? "" : tab.baseIcon
+        color: running ? island.profile(running).color : (tab.current || tabMouse.containsMouse ? Theme.fg : Theme.secondary)
+        Behavior on color { ColorAnimation { duration: Theme.ms(160) } }
       }
 
       // Badges: pending permissions, shelf count.
       Rectangle {
         readonly property int n: tab.key === "agent" ? island.agents.pending.length : tab.key === "shelf" ? island.shelf.count : 0
         visible: n > 0 && !tab.current
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.rightMargin: 4
+        x: Math.round(parent.width / 2 + (tab.marksOnly ? 14 : 6))
+        y: 2
         width: Math.max(16, badgeText.implicitWidth + 8); height: 16; radius: 8
         color: tab.key === "agent" ? island.agentColor : Theme.blue
         Label { id: badgeText; anchors.centerIn: parent; text: parent.n; font.pixelSize: 10; strong: true; horizontalAlignment: Text.AlignHCenter }
       }
 
       MouseArea {
+        id: tabMouse
         anchors.fill: parent
+        hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: island.setPage(tab.key)
       }

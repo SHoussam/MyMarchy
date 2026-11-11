@@ -35,7 +35,7 @@ Page {
     text: page.agents.scanning ? I18n.t("Taranıyor…") : page.scanNote
     fontSize: 12
     accessibleName: I18n.t("Açık oturumları tara")
-    onClicked: page.agents.scan()
+    onClicked: { page.agents.scan(); page.agents.pollLmStudio() }
   }
   readonly property bool perAgent: island.barAgents.length > 1
   readonly property var sessions: overview ? [] : agents.sessionList.filter(s => !perAgent || s.agent === agentId).slice(0, 4)
@@ -118,9 +118,37 @@ Page {
     return st === "thinking" || st === "tool" || st === "compacting"
   }
 
+  function formatTokens(n) {
+    var v = Number(n) || 0
+    if (v >= 1000000) return (v / 1000000).toFixed(1).replace(/\.0$/, "") + "M tok"
+    if (v >= 1000) return Math.round(v / 1000) + "k tok"
+    return v > 0 ? (v + " tok") : ""
+  }
+
+  function isLocalProvider(p) {
+    var s = String(p || "").toLowerCase()
+    return s === "lmstudio" || s === "local" || s === "ollama" || s === "llama.cpp" || s === "llamacpp" || s === "vllm"
+  }
+
+  function shortModelBadge(s) {
+    if (!s || !s.model) return ""
+    var m = String(s.model)
+    var slash = m.lastIndexOf("/")
+    if (slash !== -1) m = m.substring(slash + 1)
+    var prov = String(s.provider || "")
+    var out = (prov && isLocalProvider(prov) && m.indexOf(prov + "/") !== 0) ? (prov + "/" + m) : m
+    return out.length > 24 ? out.substring(0, 23) + "…" : out
+  }
+
   // Labels and tones come from AgentBridge.stateLook; rows add detail.
   function stateText(s) {
     var st = agents.displayState(s)
+    if (s && s.agent === "lmstudio") {
+      var meta = s.modelMeta ? " · " + s.modelMeta : ""
+      if (st === "thinking") return I18n.t("Yanıt üretiyor…") + meta
+      if (st === "done") return I18n.t("Bitti") + (s.lastDuration ? " · " + island.duration(s.lastDuration) : "") + meta
+      return I18n.t("Hazır") + meta + (s.provider === "llama.cpp" ? " · llama.cpp" : "")
+    }
     switch (st) {
       case "waiting": return I18n.t("İzin bekliyor · ") + (s.tool || "")
       case "input": return s.message || I18n.t("Seni bekliyor")
@@ -178,6 +206,7 @@ Page {
           readonly property var prof: island.profile(modelData)
           readonly property var mine: agents.sessionList.filter(x => x.agent === modelData)
           readonly property var u: agents.usageOf(modelData)
+          readonly property var lmInfo: modelData === "lmstudio" ? agents.lmStudioInfo : null
           readonly property bool connected: agents.installed[modelData] === true
           width: parent.width
           height: 58
@@ -212,10 +241,15 @@ Page {
               width: parent.width
               font.pixelSize: 12
               color: Theme.secondary
-              text: (agentCard.mine.length ? I18n.count(agentCard.mine.length, "session")
-                     : agentCard.connected || agentCard.prof.integration === "none" ? I18n.t("Aktif oturum yok") : I18n.t("Bağlı değil"))
-                + (agentCard.u.session >= 0 ? "  ·  " + I18n.t("5s") + " " + Math.round(agentCard.u.session * 100) + "%" : "")
-                + (agentCard.u.weekly >= 0 ? "  ·  " + I18n.t("7g") + " " + Math.round(agentCard.u.weekly * 100) + "%" : "")
+              text: agentCard.modelData === "lmstudio"
+                ? ((agentCard.mine.length ? I18n.t("Yüklü: %1").arg(agentCard.mine.length)
+                    : agentCard.lmInfo && agentCard.lmInfo.running ? I18n.t("Model yüklü değil") : I18n.t("Aktif oturum yok"))
+                   + (agentCard.lmInfo && agentCard.lmInfo.server ? "  ·  :" + agentCard.lmInfo.port : ""))
+                : ((agentCard.mine.length ? I18n.count(agentCard.mine.length, "session")
+                    : agentCard.connected || agentCard.prof.integration === "none" ? I18n.t("Aktif oturum yok") : I18n.t("Bağlı değil"))
+                   + (agentCard.u.session >= 0 ? "  ·  " + I18n.t("5s") + " " + Math.round(agentCard.u.session * 100) + "%" : "")
+                   + (agentCard.u.weekly >= 0 ? "  ·  " + I18n.t("7g") + " " + Math.round(agentCard.u.weekly * 100) + "%" : "")
+                   + (agentCard.u.session < 0 && agentCard.u.todayTokens > 0 ? "  ·  " + I18n.t("Bugün") + " " + page.formatTokens(agentCard.u.todayTokens) : ""))
             }
           }
           Row {
@@ -235,9 +269,9 @@ Page {
             }
             IslandButton {
               size: 34
-              icon: "plus"
+              icon: agentCard.prof.gui ? "arrow-up-right" : "plus"
               iconSize: 16
-              accessibleName: I18n.t("Yeni ") + agentCard.prof.name + I18n.t(" oturumu")
+              accessibleName: agentCard.prof.gui ? I18n.t("LM Studio'yu aç") : (I18n.t("Yeni ") + agentCard.prof.name + I18n.t(" oturumu"))
               onClicked: { agents.newSession(agentCard.modelData); island.collapse() }
             }
           }
@@ -256,8 +290,8 @@ Page {
         id: headRow
         anchors.verticalCenter: parent.verticalCenter
         spacing: 10
-        // Room left of the usage readout; the session count gives way first.
-        readonly property real room: parent.width - (usageRow.visible ? usageRow.width + 14 : 0)
+        // Room left of the usage/status readout; the session count gives way first.
+        readonly property real room: parent.width - (usageRow.visible ? usageRow.width + 14 : statusPill.visible ? statusPill.width + 14 : 0)
         Icon {
           visible: !agentBar.visible
           anchors.verticalCenter: parent.verticalCenter
@@ -422,7 +456,9 @@ GlassSheen { visible: Theme.glass && agentBar.open }
           id: countLabel
           anchors.verticalCenter: parent.verticalCenter
           visible: !agentBar.open && productLabel.lead + productLabel.implicitWidth + implicitWidth + 20 <= headRow.room
-          text: page.sessions.length > 0 ? I18n.count(page.sessions.length, "session") : ""
+          text: page.sessions.length > 0
+            ? (page.agentId === "lmstudio" ? I18n.t("Yüklü: %1").arg(page.sessions.length) : I18n.count(page.sessions.length, "session"))
+            : ""
           font.pixelSize: 13
           color: Theme.tertiary
         }
@@ -462,10 +498,49 @@ GlassSheen { strength: 0.7 }
       }
       MouseArea {
         anchors.fill: usageRow
+        visible: usageRow.visible
         cursorShape: Qt.PointingHandCursor
         onClicked: agents.openUsage()
         Accessible.role: Accessible.Button
         Accessible.name: I18n.t("Kullanım ayrıntıları")
+      }
+      // Local token count (OpenCode) or LM Studio HTTP API port indicator
+      Rectangle {
+        id: statusPill
+        readonly property bool lmServer: page.agentId === "lmstudio" && !!(agents.lmStudioInfo && agents.lmStudioInfo.server)
+        readonly property string tokText: page.formatTokens(agents.usage.todayTokens)
+        visible: !usageRow.visible && (lmServer || tokText !== "" || agents.usage.todayPrompts > 0)
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        height: 22
+        width: pillRow.implicitWidth + 16
+        radius: 11
+        color: Theme.fill
+        GlassSheen {}
+        Row {
+          id: pillRow
+          anchors.centerIn: parent
+          spacing: 6
+          Rectangle {
+            visible: statusPill.lmServer
+            anchors.verticalCenter: parent.verticalCenter
+            width: 6; height: 6; radius: 3
+            color: Theme.green
+          }
+          Label {
+            anchors.verticalCenter: parent.verticalCenter
+            text: statusPill.lmServer ? (":" + agents.lmStudioInfo.port)
+              : (I18n.t("Bugün") + " · " + (statusPill.tokText || (agents.usage.todayPrompts + "×")))
+            font.pixelSize: 11
+            tabular: true
+            color: Theme.secondary
+          }
+        }
+        MouseArea {
+          anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
+          onClicked: statusPill.lmServer ? agents.focusLmStudio(null) : agents.openUsage()
+        }
       }
     }
 
@@ -502,6 +577,7 @@ GlassSheen { strength: 0.7 }
             onClicked: {
               if (row.waiting) island.setPage("permission")
               else if (row.watchable) page.pickedId = row.s.id
+              else if (row.s.agent === "lmstudio") agents.focusLmStudio(row.s)
               else agents.focusTerminal(row.s)
             }
           }
@@ -538,7 +614,29 @@ GlassSheen { strength: 0.7 }
                 text: row.s.project || "oturum"
                 font.pixelSize: 14
                 strong: true
-                width: Math.min(implicitWidth, parent.width - (timeLabel.visible ? timeLabel.width + 8 : 0))
+                width: Math.max(40, Math.min(implicitWidth, parent.width - (modelBadge.visible ? modelBadge.width + 8 : 0) - (timeLabel.visible ? timeLabel.width + 8 : 0)))
+              }
+              Rectangle {
+                id: modelBadge
+                readonly property string labelText: page.shortModelBadge(row.s)
+                readonly property bool isLocal: page.isLocalProvider(row.s.provider)
+                visible: row.s.agent !== "lmstudio" && labelText !== ""
+                anchors.verticalCenter: parent.verticalCenter
+                height: 18
+                width: Math.min(modelBadgeText.implicitWidth + 10, 148)
+                radius: 9
+                color: isLocal ? Qt.rgba(0.616, 0.486, 0.957, 0.18) : Theme.ink(0.08)
+                border.width: isLocal ? 1 : 0
+                border.color: isLocal ? Qt.rgba(0.616, 0.486, 0.957, 0.36) : "transparent"
+                Label {
+                  id: modelBadgeText
+                  anchors.centerIn: parent
+                  width: Math.min(implicitWidth, parent.width - 10)
+                  text: modelBadge.labelText
+                  font.pixelSize: 10
+                  strong: modelBadge.isLocal
+                  color: modelBadge.isLocal ? "#9D7CF4" : Theme.secondary
+                }
               }
               Label {
                 id: timeLabel
@@ -576,6 +674,7 @@ GlassSheen { strength: 0.7 }
               onClicked: island.setPage("permission")
             }
             IslandButton {
+              visible: !!row.s.cwd && row.s.agent !== "lmstudio"
               size: 34
               iconSource: island.apps.editorIcon
               icon: island.apps.editorIcon ? "" : "code"
@@ -584,10 +683,22 @@ GlassSheen { strength: 0.7 }
               onClicked: { agents.openInEditor(row.s); island.collapse() }
             }
             IslandButton {
+              visible: row.s.agent === "lmstudio" && !row.s.standalone
               size: 34
-              icon: "terminal"
-              accessibleName: I18n.t("Terminale git")
-              onClicked: { agents.focusTerminal(row.s); island.collapse() }
+              icon: "x"
+              enabled2: agents.lmActionKey === ""
+              accessibleName: I18n.t("Modeli bellekten kaldır")
+              onClicked: agents.unloadLmModel(row.s.model)
+            }
+            IslandButton {
+              size: 34
+              icon: row.s.agent === "lmstudio" ? "arrow-up-right" : "terminal"
+              accessibleName: row.s.agent === "lmstudio" ? I18n.t("LM Studio'yu aç") : I18n.t("Terminale git")
+              onClicked: {
+                if (row.s.agent === "lmstudio") agents.focusLmStudio(row.s)
+                else agents.focusTerminal(row.s)
+                island.collapse()
+              }
             }
           }
         }
@@ -913,14 +1024,17 @@ GlassSheen {}
         spacing: 3
         Label {
           width: parent.width
-          text: !page.connectable ? I18n.t("%1 canlı oturum paylaşmıyor").arg(page.product)
+          text: page.agentId === "lmstudio" ? I18n.t("Model yüklü değil")
+            : !page.connectable ? I18n.t("%1 canlı oturum paylaşmıyor").arg(page.product)
             : page.connected ? I18n.t("Aktif oturum yok") : I18n.t("%1 bağlı değil").arg(page.product)
           font.pixelSize: 14
           strong: true
         }
         Label {
           width: parent.width
-          text: !page.connectable ? I18n.t("Kısayol ve kullanım bilgisi yine burada.")
+          text: page.agentId === "lmstudio"
+            ? (agents.lmStudioInfo && agents.lmStudioInfo.running ? I18n.t("Yerel sunucu aktif") : I18n.t("LM Studio'yu başlatınca modeller burada görünür."))
+            : !page.connectable ? I18n.t("Kısayol ve kullanım bilgisi yine burada.")
             : page.connected ? I18n.t("Bir oturum başlatınca burada görünür.")
             : page.profile.integration === "full" ? I18n.t("Bağlayınca oturumlar ve izinler burada.")
             : I18n.t("Bağlayınca oturumlar burada.")
@@ -943,6 +1057,89 @@ GlassSheen {}
       }
     }
 
+    // ---- downloaded local models (LM Studio)
+    Rectangle {
+      id: lmLibrary
+      readonly property var downloaded: (agents.lmStudioInfo && agents.lmStudioInfo.downloaded) ? agents.lmStudioInfo.downloaded : []
+      visible: !page.overview && page.agentId === "lmstudio" && downloaded.length > 0
+      width: parent.width
+      height: 36 + Math.min(180, downloaded.length * 40)
+      radius: 18
+      color: Theme.ink(0.05)
+      GlassSheen {}
+      border.width: 1
+      border.color: Theme.hairline
+
+      Row {
+        x: 14
+        y: 10
+        spacing: 6
+        Icon { anchors.verticalCenter: parent.verticalCenter; source: island.logoFor("lmstudio"); size: 13; color: "#9D7CF4" }
+        Label { anchors.verticalCenter: parent.verticalCenter; text: I18n.t("Yerel modeller"); font.pixelSize: 11; color: Theme.tertiary }
+      }
+
+      ListView {
+        anchors.top: parent.top
+        anchors.topMargin: 32
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 6
+        anchors.left: parent.left
+        anchors.leftMargin: 8
+        anchors.right: parent.right
+        anchors.rightMargin: 8
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        model: lmLibrary.downloaded
+        delegate: Item {
+          id: mRow
+          required property var modelData
+          readonly property bool isLoaded: !!(agents.sessions["lmstudio:" + modelData.key])
+          readonly property bool isBusyKey: agents.lmActionKey === modelData.key
+          readonly property string metaStr: [modelData.params, modelData.quant].filter(x => !!x).join(" · ")
+          width: ListView.view.width
+          height: 40
+
+          Column {
+            anchors.left: parent.left
+            anchors.leftMargin: 6
+            anchors.right: mActionBtn.left
+            anchors.rightMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 1
+            Label {
+              width: parent.width
+              text: modelData.name || modelData.key
+              font.pixelSize: 13
+              strong: mRow.isLoaded
+              color: mRow.isLoaded ? "#9D7CF4" : Theme.fg
+            }
+            Label {
+              visible: mRow.metaStr !== "" || modelData.type === "embedding"
+              width: parent.width
+              text: mRow.metaStr + (modelData.type === "embedding" ? (mRow.metaStr ? " · " : "") + "embedding" : "")
+              font.pixelSize: 11
+              color: Theme.tertiary
+            }
+          }
+
+          IslandButton {
+            id: mActionBtn
+            anchors.right: parent.right
+            anchors.rightMargin: 4
+            anchors.verticalCenter: parent.verticalCenter
+            size: 28
+            fontSize: 11
+            text: mRow.isBusyKey ? I18n.t("Yükleniyor…") : mRow.isLoaded ? I18n.t("Kaldır") : I18n.t("Yükle")
+            tint: mRow.isLoaded ? Theme.secondary : "#9D7CF4"
+            prominent: !mRow.isLoaded
+            enabled2: agents.lmActionKey === ""
+            accessibleName: mRow.isLoaded ? I18n.t("Modeli bellekten kaldır") : I18n.t("Modeli yükle")
+            onClicked: mRow.isLoaded ? agents.unloadLmModel(mRow.modelData.key) : agents.loadLmModel(mRow.modelData.key)
+          }
+        }
+      }
+    }
+
     // ---- shortcuts
     Row {
       visible: !page.overview
@@ -950,37 +1147,47 @@ GlassSheen {}
       RefreshButton { size: 36; anchors.verticalCenter: parent.verticalCenter }
       IslandButton {
         size: 36
-        icon: "plus"
-        text: I18n.t("Yeni oturum")
+        icon: page.agentId === "lmstudio" ? "arrow-up-right" : "plus"
+        text: page.agentId === "lmstudio" ? I18n.t("LM Studio'yu aç") : I18n.t("Yeni oturum")
         fontSize: 13
-        accessibleName: I18n.t("Yeni ") + page.profile.name + I18n.t(" oturumu")
+        accessibleName: page.agentId === "lmstudio" ? I18n.t("LM Studio'yu aç") : (I18n.t("Yeni ") + page.profile.name + I18n.t(" oturumu"))
         onClicked: { agents.newSession(page.agentId); island.collapse() }
       }
       IslandButton {
+        visible: page.agentId !== "lmstudio"
         size: 36
         icon: "terminal"
         text: I18n.t("Terminal")
         fontSize: 13
-        enabled2: agents.focusSession !== null
+        enabled2: page.sessions.length > 0 || (agents.focusSession !== null && agents.focusSession.agent !== "lmstudio")
         accessibleName: I18n.t("Etkin oturumun terminaline git")
-        onClicked: { agents.focusTerminal(null); island.collapse() }
+        onClicked: {
+          var t = page.sessions.find(x => x.agent !== "lmstudio") || (agents.focusSession && agents.focusSession.agent !== "lmstudio" ? agents.focusSession : null)
+          agents.focusTerminal(t)
+          island.collapse()
+        }
       }
       IslandButton {
+        visible: page.agentId !== "lmstudio"
         size: 36
         iconSource: island.apps.editorIcon
         icon: island.apps.editorIcon ? "" : "code"
         text: island.editorLabels[island.apps.editor] || I18n.t("Editör")
         fontSize: 13
-        enabled2: agents.focusSession !== null
+        enabled2: page.sessions.some(x => !!x.cwd) || (agents.focusSession !== null && !!agents.focusSession.cwd)
         accessibleName: I18n.t("Etkin oturumun klasörünü editörde aç")
-        onClicked: { agents.openInEditor(null); island.collapse() }
+        onClicked: {
+          var t = page.sessions.find(x => !!x.cwd) || agents.focusSession
+          agents.openInEditor(t)
+          island.collapse()
+        }
       }
       IslandButton {
         size: 36
         icon: "trash"
         filled: false
         tint: Theme.secondary
-        visible: agents.sessionList.some(s => !agents.isBusy(s))
+        visible: agents.sessionList.some(s => s.agent !== "lmstudio" && !agents.isBusy(s))
         accessibleName: I18n.t("Biten oturumları temizle")
         onClicked: agents.clearFinished()
       }

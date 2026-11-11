@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+"$ROOT/bin/build"
+
+BIN_DIR="${HOME}/.local/bin"
+APP_DIR="${HOME}/.local/share/applications"
+ICON_DIR="${HOME}/.local/share/icons/hicolor/scalable/apps"
+
+mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR"
+
+install -Dm755 "$ROOT/build/dynamic-island" "$BIN_DIR/dynamic-island"
+install -Dm644 "$ROOT/pkgbuild/dynamic-island.svg" "$ICON_DIR/dynamic-island.svg"
+
+sed "s|^Exec=dynamic-island|Exec=${BIN_DIR}/dynamic-island|" \
+  "$ROOT/pkgbuild/dynamic-island.desktop" > "$APP_DIR/dynamic-island.desktop"
+chmod 644 "$APP_DIR/dynamic-island.desktop"
+
+if command -v desktop-file-validate >/dev/null 2>&1; then
+  desktop-file-validate "$APP_DIR/dynamic-island.desktop"
+fi
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database "$APP_DIR" >/dev/null 2>&1 || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -q -t -f "${HOME}/.local/share/icons/hicolor" >/dev/null 2>&1 || true
+fi
+
+echo "Installed $BIN_DIR/dynamic-island, $APP_DIR/dynamic-island.desktop, and $ICON_DIR/dynamic-island.svg"

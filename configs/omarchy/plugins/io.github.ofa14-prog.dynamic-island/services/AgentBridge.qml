@@ -98,15 +98,13 @@ Item {
   readonly property string socketPath: runtimeDir + "/agents.sock"
   readonly property string home: Quickshell.env("HOME") || ""
   property string defaultAgent: ""   // Omarchy's default agent id
-  // Usage records written by Omarchy's agents panel (claude.json, codex.json…).
-  // The agent whose usage is shown (the AI page's agent). Omarchy's agents
-  // panel writes usage records for Claude and Codex; Antigravity's comes
-  // from `agy -p /usage` (see below).
+  // Usage records written by Omarchy's agents panel (claude.json, codex.json,
+  // opencode.json, local.json…). Antigravity's comes from `agy -p /usage`.
   property string usageAgent: ""
   readonly property string usageFor: usageAgent || defaultAgent || "claude"
   // Agents whose usage is wanted at once (Home shows every running agent).
   property var usageAgents: []
-  readonly property var noUsage: ({ session: -1, weekly: -1, sessionResets: "", weeklyResets: "" })
+  readonly property var noUsage: ({ session: -1, weekly: -1, sessionResets: "", weeklyResets: "", todayTokens: 0, todayPrompts: 0, todaySessions: 0 })
   readonly property string usageDir: (Quickshell.env("XDG_STATE_HOME") || home + "/.local/state") + "/omarchy/agents/usage/"
   // agent id → { session, weekly, sessionResets, weeklyResets } (0..1 used)
   property var usageByAgent: ({})
@@ -234,20 +232,27 @@ Item {
   // something looks wrong. Kept small and in memory only.
   property var eventLog: []
   function logEvent(msg, note) {
-    var s = sessions[msg.session]
-    var entry = { at: now(), ts: msg.ts || 0, event: msg.event, session: (msg.session || "").substring(0, 8),
+    var rawId = String(msg.session || "")
+    var s = sessions[rawId]
+    var shortId = rawId.indexOf("lmstudio:") === 0 ? rawId.substring(9, 25) : rawId.substring(0, 8)
+    var entry = { at: now(), ts: msg.ts || 0, event: msg.event, session: shortId,
       agent: msg.agent || "", tool: msg.tool || "", entry: msg.entry || "", before: s ? s.state : "", note: note || "" }
     eventLog = eventLog.concat([entry]).slice(-80)
   }
 
+  function normPath(p) { return String(p || "").replace(/[\/\s]+$/, "") }
+
   function sessionFor(msg) {
     var id = msg.session || "unknown"
     var s = sessions[id]
-    if (!s && msg.agentPid) {
-      // A placeholder from the scan (no id yet) for this same process.
+    if (!s && (msg.agentPid || msg.cwd)) {
+      // A placeholder from the scan (no id yet) for this same process or workspace.
+      var targetDir = normPath(msg.cwd)
       for (var k in sessions) {
         var o = sessions[k]
-        if (o.agentPid === msg.agentPid && o.agent === msg.agent && /-\d+$/.test(k) && k !== id) {
+        var samePid = msg.agentPid && o.agentPid === msg.agentPid
+        var sameOpenCodeDir = !msg.agentPid && msg.agent === "opencode" && targetDir && normPath(o.cwd) === targetDir
+        if ((samePid || sameOpenCodeDir) && o.agent === msg.agent && /-\d+$/.test(k) && k !== id) {
           var next = {}
           for (var j in sessions) if (j !== k) next[j] = sessions[j]
           sessions = next
@@ -258,7 +263,10 @@ Item {
       s = {
         id: id, agent: msg.agent || "", state: "ready", project: msg.project || "", cwd: msg.cwd || "",
         tool: "", title: "", detail: "", prompt: "", message: "", error: "",
-        turnStartedAt: 0, updatedAt: now(), createdAt: now(), lastEventAt: now(), toolCount: 0,
+        model: msg.model || "", provider: msg.provider || "", modelMeta: msg.modelMeta || "",
+        standalone: false, queued: 0,
+        turnStartedAt: 0, finishedAt: 0, lastDuration: 0,
+        updatedAt: now(), createdAt: now(), lastEventAt: now(), toolCount: 0,
         pids: [], agentPid: 0, mode: "", transcript: "", compactTrigger: "", lastTs: 0
       }
     }
@@ -269,6 +277,9 @@ Item {
     if (msg.mode) s.mode = msg.mode
     if (msg.entry) s.entry = msg.entry
     if (msg.transcript) s.transcript = msg.transcript
+    if (msg.model) s.model = msg.model
+    if (msg.provider) s.provider = msg.provider
+    if (msg.modelMeta) s.modelMeta = msg.modelMeta
     s.updatedAt = now()
     s.lastEventAt = now()
     return s
@@ -452,6 +463,10 @@ Item {
       commit(s)
       sessionFailed(s)
       return
+
+    case "ModelChanged":
+    case "SessionUpdate":
+      break
 
     case "PermissionRequest": {
       s.tool = msg.tool || s.tool
@@ -699,6 +714,8 @@ Item {
     sessionList = []
     logEvent({ event: "(reset)", session: "", agent: "" }, "refresh from the island")
     refreshInstalled()
+    scan()
+    pollLmStudio()
   }
 
   function clearFinished() {
@@ -780,11 +797,11 @@ Item {
     id: transcriptCheck
     interval: 1500
     repeat: true
-    running: bridge.busySessions.some(s => s.transcript)
+    running: bridge.busySessions.some(s => s.agent === "claude" && s.transcript)
     triggeredOnStart: true
     onTriggered: {
       if (transcriptProbe.running) return
-      var watch = bridge.sessionList.filter(s => s.transcript && bridge.isBusy(s))
+      var watch = bridge.sessionList.filter(s => s.agent === "claude" && s.transcript && bridge.isBusy(s))
       if (!watch.length) return
       var args = []
       watch.forEach(s => { args.push(s.id); args.push(s.transcript) })
@@ -801,10 +818,8 @@ Item {
 
   // The agent page's terminal-style feed: the last prompts, replies, tool
   // calls and their output, summarised from the session's transcript by
-  // bin/dynamic-island-transcript. Claude Code and Codex only, the two that
-  // hand their hooks a transcript path. It is read only while someone looks
-  // at it (`previewId` is set by the agent page while it is open).
-  readonly property var previewAgents: ["claude", "codex", "antigravity"]
+  // bin/dynamic-island-transcript.
+  readonly property var previewAgents: ["claude", "codex", "antigravity", "opencode"]
   property string previewId: ""
   property var previewItems: []
   property string previewOf: ""        // session the items belong to
@@ -850,8 +865,23 @@ Item {
 
   // ---------------------------------------------------------------- actions
 
+  function focusLmStudio(session) {
+    var pid = (lmStudioInfo && lmStudioInfo.guiPid) ? Number(lmStudioInfo.guiPid)
+      : (session && session.agentPid ? Number(session.agentPid) : 0)
+    var script =
+      "c=$(hyprctl clients -j 2>/dev/null); " +
+      "addr=$(printf '%s' \"$c\" | jq -r --arg p \"$1\" 'first(.[] | select((.class // \"\" | test(\"lmstudio\"; \"i\")) or (.initialClass // \"\" | test(\"lmstudio\"; \"i\")) or (($p != \"0\") and (.pid == ($p|tonumber))))).address // empty'); " +
+      "if [ -n \"$addr\" ]; then " +
+      "  hyprctl dispatch \"hl.dsp.focus({ window = \\\"address:$addr\\\" })\" >/dev/null 2>&1 || hyprctl dispatch focuswindow \"address:$addr\" >/dev/null; " +
+      "elif command -v lm-studio >/dev/null 2>&1; then " +
+      "  setsid -f lm-studio >/dev/null 2>&1; " +
+      "fi"
+    Quickshell.execDetached(["sh", "-c", script, "sh", String(pid)])
+  }
+
   function focusTerminal(session) {
     var s = session || focusSession
+    if (s && s.agent === "lmstudio") { focusLmStudio(s); return }
     var argv = [pluginDir + "/bin/dynamic-island-focus"]
     if (s && s.pids) for (var i = 0; i < s.pids.length; i++) argv.push(String(s.pids[i]))
     Quickshell.execDetached(argv)
@@ -890,7 +920,7 @@ Item {
   }
 
   function openInEditor(session) {
-    var s = session || focusSession
+    var s = session || (focusSession && focusSession.cwd ? focusSession : sessionList.find(x => !!x.cwd))
     if (s && s.cwd) Quickshell.execDetached(["omarchy-launch-editor", s.cwd])
   }
 
@@ -900,6 +930,7 @@ Item {
   property string omarchyAgent: ""
   function newSession(agentId) {
     var id = agentId || defaultAgent || omarchyAgent
+    if (id === "lmstudio") { focusLmStudio(); return }
     var p = Agents.get(id)
     if (!id || id === omarchyAgent || !p.launch) { Quickshell.execDetached(["omarchy-agent", "--pick"]); return }
     Quickshell.execDetached(["sh", "-c", "[ -d \"$HOME/Work\" ] && cd \"$HOME/Work\"; exec omarchy-launch-tui --app-id=org.omarchy.agent \"$@\"", "sh"].concat(p.launch))
@@ -929,11 +960,14 @@ Item {
           found++
           var known = bridge.sessions[m.session]
           var s = bridge.sessionFor({ session: m.session, agent: m.agent, cwd: m.cwd, project: m.project,
-                                      pids: m.pids, agentPid: m.agentPid, transcript: m.transcript })
+                                      pids: m.pids, agentPid: m.agentPid, transcript: m.transcript,
+                                      model: m.model || "", provider: m.provider || "" })
           if (!known) {
             added++
             if (m.busy) { bridge.startTurn(s) } else { s.state = "ready" }
             bridge.logEvent({ event: "(found by scan)", session: m.session, agent: m.agent })
+          } else if (known.state === "ready" && m.busy) {
+            bridge.startTurn(s)
           }
           bridge.commit(s)
         })
@@ -942,6 +976,126 @@ Item {
     }
   }
   Timer { running: bridge.pluginDir !== ""; interval: 1500; onTriggered: bridge.scan() }
+
+  // ---------------------------------------------------------------- LM Studio / local models
+
+  property bool agentPageShown: false
+  property string lmActionKey: ""
+  property var lmStudioInfo: ({ running: false, server: false, port: 1234, guiPid: 0, loaded: [], downloaded: [] })
+
+  function pollLmStudio() {
+    if (bridge.pluginDir !== "" && !lmstudioProc.running) lmstudioProc.running = true
+  }
+
+  function loadLmModel(key) {
+    if (!key || lmModelAction.running || bridge.pluginDir === "") return
+    lmActionKey = key
+    lmModelAction.command = [bridge.pluginDir + "/bin/dynamic-island-lmstudio", "--load", key]
+    lmModelAction.running = true
+  }
+
+  function unloadLmModel(key) {
+    if (!key || lmModelAction.running || bridge.pluginDir === "") return
+    lmActionKey = key
+    lmModelAction.command = [bridge.pluginDir + "/bin/dynamic-island-lmstudio", "--unload", key]
+    lmModelAction.running = true
+  }
+
+  function syncLmStudio(data) {
+    if (!data) return
+    if (JSON.stringify(data) !== JSON.stringify(lmStudioInfo)) lmStudioInfo = data
+    var loaded = data.loaded || []
+    var seen = {}
+    for (var i = 0; i < loaded.length; i++) {
+      var m = loaded[i]
+      if (!m || (!m.key && !m.instance)) continue
+      var sid = "lmstudio:" + (m.key || m.instance)
+      seen[sid] = true
+      var metaParts = []
+      if (m.params) metaParts.push(m.params)
+      if (m.quant) metaParts.push(m.quant)
+      if (m.ctx > 0) metaParts.push(Math.round(m.ctx / 1024) + "k")
+      var metaStr = metaParts.join(" · ")
+      var busyNow = m.status === "generating" || (Number(m.queued) || 0) > 0
+      var modelLabel = m.name || m.key || "LM Studio"
+      var pidVal = Number(m.pid) || Number(data.guiPid) || 0
+      var prov = m.standalone ? "llama.cpp" : "lmstudio"
+      var q = Number(m.queued) || 0
+      var existing = sessions[sid]
+
+      if (!existing) {
+        var s = {
+          id: sid, agent: "lmstudio", state: busyNow ? "thinking" : "ready",
+          project: modelLabel, cwd: "", tool: "", title: "", detail: "", prompt: "", message: "", error: "",
+          model: m.key || modelLabel, provider: prov, modelMeta: metaStr,
+          standalone: !!m.standalone, queued: q,
+          turnStartedAt: busyNow ? now() : 0, finishedAt: 0, lastDuration: 0,
+          updatedAt: now(), createdAt: now(), lastEventAt: now(), toolCount: 0,
+          pids: pidVal ? [pidVal] : [], agentPid: pidVal, mode: "", transcript: "", compactTrigger: "", lastTs: 0
+        }
+        logEvent({ event: busyNow ? "UserPromptSubmit" : "(loaded)", session: sid, agent: "lmstudio" })
+        commit(s)
+      } else {
+        var changed = false
+        if (existing.project !== modelLabel) { existing.project = modelLabel; changed = true }
+        if (existing.modelMeta !== metaStr) { existing.modelMeta = metaStr; changed = true }
+        if (existing.agentPid !== pidVal) { existing.agentPid = pidVal; existing.pids = pidVal ? [pidVal] : []; changed = true }
+        if (existing.queued !== q) { existing.queued = q; changed = true }
+        if (busyNow && existing.state !== "thinking") {
+          logEvent({ event: "UserPromptSubmit", session: sid, agent: "lmstudio" })
+          startTurn(existing)
+          existing.updatedAt = now()
+          existing.lastEventAt = now()
+          commit(existing)
+        } else if (!busyNow && existing.state === "thinking") {
+          logEvent({ event: "Stop", session: sid, agent: "lmstudio" })
+          endTurn(existing, "done")
+          existing.updatedAt = now()
+          existing.lastEventAt = now()
+          commit(existing)
+          sessionFinished(existing)
+        } else if (!busyNow && existing.state === "done" && existing.finishedAt && now() - existing.finishedAt > 10000) {
+          existing.state = "ready"
+          commit(existing)
+        } else if (changed) {
+          commit(existing)
+        }
+      }
+    }
+    for (var k in sessions) {
+      if (sessions[k].agent === "lmstudio" && !seen[k]) removeSession(k)
+    }
+  }
+
+  Process {
+    id: lmstudioProc
+    command: [bridge.pluginDir + "/bin/dynamic-island-lmstudio"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try {
+          var d = JSON.parse(text)
+          if (d && typeof d === "object") bridge.syncLmStudio(d)
+        } catch (e) {}
+      }
+    }
+  }
+
+  Process {
+    id: lmModelAction
+    onExited: {
+      bridge.lmActionKey = ""
+      bridge.pollLmStudio()
+    }
+  }
+
+  Timer {
+    id: lmstudioTimer
+    interval: bridge.agentPageShown || bridge.lmStudioInfo.running ? 1600 : 5000
+    repeat: true
+    triggeredOnStart: true
+    running: bridge.pluginDir !== ""
+    onTriggered: bridge.pollLmStudio()
+  }
 
   // ---------------------------------------------------------------- liveness
 
@@ -968,7 +1122,10 @@ Item {
     onTriggered: {
       var stale = Date.now() - 6 * 3600 * 1000
       bridge.sessionList.filter(s => s.updatedAt < stale && !bridge.isBusy(s)).forEach(s => bridge.removeSession(s.id))
-      var withPid = bridge.sessionList.filter(s => s.agentPid > 0)
+      bridge.sessionList.filter(s => s.agent !== "lmstudio" && s.agent !== "claude" && bridge.isBusy(s)
+        && s.state !== "tool" && !bridge.hasPending(s.id) && bridge.now() - s.lastEventAt > bridge.quietAfterMs)
+        .forEach(s => bridge.setState(s.id, "quiet", "no event for " + Math.round(bridge.quietAfterMs / 1000) + "s"))
+      var withPid = bridge.sessionList.filter(s => s.agentPid > 0 && s.agent !== "lmstudio")
       if (withPid.length === 0 || livenessCheck.running) return
       livenessCheck.checked = withPid
       livenessCheck.command = ["sh", "-c", "for p; do [ -d /proc/$p ] || echo $p; done", "sh"].concat(withPid.map(s => String(s.agentPid)))
@@ -1014,20 +1171,26 @@ Item {
   // ---------------------------------------------------------------- usage
 
   // Omarchy's agents panel keeps a usage record per agent it knows
-  // (claude.json, codex.json); each is watched.
+  // (claude.json, codex.json, opencode.json, local.json); each is watched.
   Instantiator {
-    model: ["claude", "codex"]
+    model: ["claude", "codex", "opencode", "local"]
     delegate: FileView {
       required property string modelData
+      readonly property string agentKey: modelData === "local" ? "lmstudio" : modelData
       path: bridge.usageDir + modelData + ".json"
       watchChanges: true
       printErrors: false
       onFileChanged: reload()
-      onLoadFailed: bridge.setUsage(modelData, bridge.noUsage)
+      onLoadFailed: bridge.setUsage(agentKey, bridge.noUsage)
       onLoaded: {
         try {
           var rec = JSON.parse(text())
-          var out = { session: -1, weekly: -1, sessionResets: "", weeklyResets: "" }
+          var out = {
+            session: -1, weekly: -1, sessionResets: "", weeklyResets: "",
+            todayTokens: Number(rec.todayTotalTokens) || 0,
+            todayPrompts: Number(rec.todayPrompts) || 0,
+            todaySessions: Number(rec.todaySessions) || 0
+          }
           var limits = rec.limits || []
           for (var i = 0; i < limits.length; i++) {
             var l = limits[i]
@@ -1038,7 +1201,7 @@ Item {
               out.weekly = Number(l.percent); out.weeklyResets = l.resetsAt || ""
             }
           }
-          bridge.setUsage(modelData, out)
+          bridge.setUsage(agentKey, out)
         } catch (e) {}
       }
     }

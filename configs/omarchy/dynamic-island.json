@@ -1,11 +1,12 @@
 {
-  "hoverExpand": false,
+  "hoverExpand": true,
   "hoverDelay": 80,
   "collapseDelay": 420,
   "idleClock": true,
   "clockFormat": "ddd HH:mm",
   "topOffset": 0,
   "priority": [
+    "agent",
     "music",
     "timer",
     "recording"

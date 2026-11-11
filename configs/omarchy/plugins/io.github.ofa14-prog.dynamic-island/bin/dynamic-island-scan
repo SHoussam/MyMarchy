@@ -10,19 +10,28 @@ island). Read-only: it looks at /proc and the agents' own state files.
   Claude Code   ~/.claude/sessions/<pid>.json (session id, folder, status)
   Antigravity   the agy process's own log (last conversation id)
   Codex         the rollout file the codex process keeps open
-  OpenCode      the process only (no session id: "opencode-<pid>")
+  OpenCode      /dev/pts/* opencode process + ~/.local/share/opencode/opencode.db
 
 Only processes attached to a terminal count, so helpers and headless runs
-(claude -p, agy -p, the browser bridge) are left out.
+(claude -p, agy -p, opencode serve --service) are left out.
 """
 
 import json
 import os
 import re
+import sqlite3
 
 HOME = os.path.expanduser("~")
+XDG_CONFIG = os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config")
+XDG_DATA = os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share")
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-AGENTS = {"claude": "claude", "agy": "antigravity", "codex": "codex", "opencode": "opencode"}
+AGENTS = {
+    "claude": "claude",
+    "agy": "antigravity",
+    "codex": "codex",
+    "opencode": "opencode",
+    "opencode.exe": "opencode",
+}
 
 
 def read(path, limit=1 << 20):
@@ -102,7 +111,152 @@ def codex(pid, cwd):
     return (m.group(0) if m else f"codex-{pid}"), cwd, rollout, False
 
 
+def _norm_dir(p):
+    return str(p or "").rstrip("/ ")
+
+
+OPENCODE_NON_TUI_SUBCOMMANDS = {
+    "upgrade", "update", "uninstall", "acp", "api", "debug", "auth",
+    "mcp", "plugin", "models", "stats", "session", "service", "reload",
+    "pair", "serve",
+}
+OPENCODE_EXIT_FLAGS = {"-h", "--help", "-v", "--version", "--wizard", "--service"}
+OPENCODE_VALUE_FLAGS = {
+    "--server", "-s", "--session", "--prompt", "--log-level", "--completions",
+    "-m", "--model", "--agent", "--title", "--format", "-n", "--file", "-f",
+    "--dir", "--port", "--hostname", "--command", "--variant",
+}
+
+
+def _opencode_positionals(argv):
+    pos = []
+    skip_next = False
+    for a in argv[1:]:
+        if not a:
+            continue
+        if skip_next:
+            skip_next = False
+            continue
+        if a in OPENCODE_EXIT_FLAGS or a.startswith("--completions=") or a == "--completions":
+            return None
+        if a in OPENCODE_VALUE_FLAGS:
+            skip_next = True
+            continue
+        if a.startswith("-"):
+            continue
+        pos.append(a)
+    return pos
+
+
+def _opencode_is_interactive(argv):
+    pos = _opencode_positionals(argv)
+    if pos is None:
+        return False
+    if pos and "/" not in pos[0] and not pos[0].startswith(".") and pos[0] in OPENCODE_NON_TUI_SUBCOMMANDS:
+        return False
+    return True
+
+
+def _opencode_default_model():
+    for name in ("opencode.json", "opencode.jsonc"):
+        raw = read(os.path.join(XDG_CONFIG, "opencode", name))
+        if not raw:
+            continue
+        m = re.search(r'"model"\s*:\s*"([^"]+)"', raw)
+        if m:
+            val = m.group(1).strip()
+            if "/" in val:
+                prov, mid = val.split("/", 1)
+                return mid, prov
+            return val, ""
+    return "", ""
+
+
+def opencode(pid, cwd, argv, tui_count, used_sids):
+    db = os.path.join(XDG_DATA, "opencode", "opencode.db")
+    dir_hint = cwd
+    pos = _opencode_positionals(argv) or []
+    for a in pos:
+        if a in ("mini", "run"):
+            continue
+        cand = a if os.path.isabs(a) else os.path.join(cwd, a)
+        if os.path.isdir(cand):
+            dir_hint = os.path.realpath(cand)
+            break
+    def_model, def_prov = _opencode_default_model()
+    if not os.path.exists(db):
+        return f"opencode-{pid}", dir_hint, "", False, def_model, def_prov
+
+    try:
+        proc_start_ms = os.stat(f"/proc/{pid}").st_ctime * 1000
+    except OSError:
+        proc_start_ms = 0
+
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=0.4)
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            "SELECT id, directory, model, time_busy, time_idle, time_updated "
+            "FROM session_v2 WHERE parent_id IS NULL AND time_archived IS NULL "
+            "ORDER BY time_updated DESC LIMIT 24"
+        ).fetchall()
+    except (sqlite3.Error, OSError):
+        return f"opencode-{pid}", dir_hint, "", False, def_model, def_prov
+
+    avail = [r for r in rows if r["id"] not in used_sids]
+    target = _norm_dir(dir_hint)
+    home_norm = _norm_dir(HOME)
+    pick = None
+    # 1. Same directory updated around/after process launch
+    for r in avail:
+        if _norm_dir(r["directory"]) == target and (r["time_updated"] or 0) >= proc_start_ms - 5000:
+            pick = r
+            break
+    # 2. User launched `opencode` in $HOME or sole TUI and switched workspaces in TUI
+    if pick is None and (tui_count == 1 or target == home_norm):
+        for r in avail:
+            if (r["time_updated"] or 0) >= proc_start_ms - 5000:
+                pick = r
+                break
+    # 3. Same directory from earlier session
+    if pick is None:
+        for r in avail:
+            if _norm_dir(r["directory"]) == target:
+                pick = r
+                break
+
+    if pick is None:
+        con.close()
+        return f"opencode-{pid}", dir_hint, "", False, def_model, def_prov
+
+    sid = pick["id"]
+    used_sids.add(sid)
+    sess_cwd = pick["directory"] or dir_hint
+    busy = bool((pick["time_busy"] or 0) > (pick["time_idle"] or 0))
+    model_id, provider_id = def_model, def_prov
+
+    try:
+        last_msg = con.execute(
+            "SELECT data FROM session_message WHERE session_id = ? AND type = 'assistant' "
+            "ORDER BY seq DESC LIMIT 1",
+            (sid,),
+        ).fetchone()
+        raw_model = (json.loads(last_msg["data"]).get("model") if last_msg else None) or (
+            json.loads(pick["model"]) if pick["model"] else None
+        )
+        if isinstance(raw_model, dict):
+            model_id = raw_model.get("id") or model_id
+            provider_id = raw_model.get("providerID") or provider_id
+    except (sqlite3.Error, ValueError, TypeError):
+        pass
+    finally:
+        con.close()
+
+    return sid, sess_cwd, f"{db}#{sid}", busy, model_id, provider_id
+
+
 def main():
+    candidates = []
     for name in os.listdir("/proc"):
         if not name.isdigit():
             continue
@@ -115,8 +269,20 @@ def main():
         agent = AGENTS.get(exe) or AGENTS.get(comm)
         if not agent or not tty.startswith("/dev/pts/"):
             continue
-        if any(a in ("-p", "--print", "--prompt", "--chrome-native-host", "mic-serve") for a in argv[1:]):
+        if any(a in ("-p", "--print", "--chrome-native-host", "mic-serve") for a in argv[1:]):
             continue
+        if agent == "opencode":
+            if not _opencode_is_interactive(argv):
+                continue
+        elif "--prompt" in argv[1:]:
+            continue
+        candidates.append((pid, agent, argv, cwd))
+
+    opencode_tuis = sum(1 for _, a, _, _ in candidates if a == "opencode")
+    used_opencode_sids = set()
+
+    for pid, agent, argv, cwd in candidates:
+        model_id, provider_id = "", ""
         if agent == "claude":
             found = claude(pid, cwd)
         elif agent == "antigravity":
@@ -124,16 +290,25 @@ def main():
         elif agent == "codex":
             found = codex(pid, cwd)
         else:
-            found = (f"opencode-{pid}", cwd, "", False)
+            found_oc = opencode(pid, cwd, argv, opencode_tuis, used_opencode_sids)
+            if not found_oc:
+                continue
+            sid, cwd, transcript, busy, model_id, provider_id = found_oc
+            found = (sid, cwd, transcript, busy)
         if not found:
             continue
         sid, cwd, transcript, busy = found
-        print(json.dumps({
+        out = {
             "agent": agent, "session": sid, "cwd": cwd,
-            "project": os.path.basename(cwd.rstrip("/")) or cwd,
+            "project": os.path.basename(cwd.rstrip("/ ")) or cwd,
             "pids": chain(pid), "agentPid": pid,
             "transcript": transcript, "busy": busy,
-        }))
+        }
+        if model_id:
+            out["model"] = model_id
+        if provider_id:
+            out["provider"] = provider_id
+        print(json.dumps(out))
 
 
 if __name__ == "__main__":
